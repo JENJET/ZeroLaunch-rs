@@ -10,6 +10,8 @@
     "open_file_location": "開啟檔案位置",
     "run_as_admin": "以系統管理員身分執行",
     "block_this_result": "屏蔽該結果",
+    "open_folder_failed": "開啟資料夾失敗",
+    "run_as_admin_failed": "以系統管理員身分執行失敗",
     "block_success_title": "已新增到屏蔽清單",
     "block_success_body": "重新整理資料庫後生效",
     "start_refresh": "開始重新整理",
@@ -591,6 +593,7 @@
     "export_logs_cancelled": "已取消匯出日誌"
   },
   "everything": {
+    "mode": "Everything 模式",
     "everything_search_settings": "Everything搜尋設定",
     "sort_method": "排序方式",
     "sort_method_tooltip": "設定搜尋結果的排序方式",

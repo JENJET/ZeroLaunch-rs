@@ -184,6 +184,8 @@ pub fn run() {
             handle_everything_search,
             launch_everything_item,
             everything_enable_path_match,
+            open_file_parent_folder,
+            launch_path_as_admin,
             get_launch_template_info,
             update_search_bar_window,
             get_background_picture,

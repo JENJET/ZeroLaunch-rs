@@ -2,7 +2,12 @@
   <div
     v-if="uiConfig.footer_height > 0"
     class="footer"
-    :style="{ backgroundColor: uiConfig.search_bar_background_color, fontSize: Math.round(uiConfig.footer_height * uiConfig.footer_font_size * layoutConstants.fontSizeRatio) + 'px', fontFamily: uiConfig.footer_font_family, }"
+    :style="{ 
+      height: uiConfig.footer_height + 'px',
+      backgroundColor: uiConfig.search_bar_background_color, 
+      fontSize: Math.round(uiConfig.footer_height * uiConfig.footer_font_size * layoutConstants.fontSizeRatio) + 'px', 
+      fontFamily: uiConfig.footer_font_family, 
+    }"
     @mousedown="startDrag"
   >
     <div class="footer-left">
@@ -49,11 +54,11 @@ const startDrag = (e: MouseEvent) => {
 <style scoped>
 .footer {
   box-sizing: border-box;
-  flex: 1;
   display: flex;
   align-items: center;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
   width: 100%;
+  flex-shrink: 0;
 }
 
 .footer-left {

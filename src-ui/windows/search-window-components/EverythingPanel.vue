@@ -2,9 +2,9 @@
   <div
     class="everything-panel"
     :style="{
-      height: uiConfig.result_item_height * appConfig.search_result_count + 'px',
-      maxHeight: uiConfig.result_item_height * appConfig.search_result_count + 'px',
       position: 'relative',
+      flex: 1,
+      minHeight: 0,
     }"
   >
     <div
@@ -34,18 +34,22 @@
       v-else
       ref="resultsListRef"
       class="results-list"
+      @scroll="handleScroll"
     >
+      <!-- 虚拟滚动：只渲染可见区域的项目 -->
       <div
-        v-for="(item, index) in results"
+        v-for="(item, index) in visibleItems"
         :key="item[0]"
         class="result-item"
-        :class="{ 'selected': selectedIndex === index }"
+        :class="{ 'selected': selectedIndex === getActualIndex(index) }"
         :style="{
           '--hover-color': hoverColor,
           '--selected-color': uiConfig.selected_item_color,
           height: uiConfig.result_item_height + 'px',
+          transform: `translateY(${getActualIndex(index) * uiConfig.result_item_height}px)`,
         }"
-        @click="handleItemClick(index)"
+        @click="handleItemClick(getActualIndex(index))"
+        @contextmenu.prevent="handleItemContextmenu(getActualIndex(index), $event)"
       >
         <div
           class="icon"
@@ -60,6 +64,8 @@
             :src="iconMap.get(item[1]) || '/tauri.svg'"
             class="custom-image"
             alt="icon"
+            @load="onIconLoad(item[1])"
+            @error="onIconError(item[1])"
           >
         </div>
         <div class="item-content">
@@ -86,12 +92,19 @@
           </div>
         </div>
       </div>
+      <!-- 占位元素，保持滚动条正确 -->
+      <div
+        class="spacer"
+        :style="{
+          height: results.length * uiConfig.result_item_height + 'px',
+        }"
+      ></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { getColorWithReducedOpacity } from '../../utils/color'
@@ -102,6 +115,11 @@ const props = defineProps<{
     uiConfig: ResolvedUIConfig;
     appConfig: AppConfig;
     hoverColor: string;
+}>()
+
+const emit = defineEmits<{
+    (e: 'item-click', index: number): void;
+    (e: 'item-contextmenu', index: number, event: MouseEvent): void;
 }>()
 
 const { t } = useI18n()
@@ -122,6 +140,35 @@ const enablePathMatch = ref<boolean>(false)
 const currentArch = ref<string>('')
 const message = ref<string | null>(null)
 let messageTimeout: number | null = null
+
+// 虚拟滚动相关
+const scrollTop = ref(0)
+const visibleCount = computed(() => props.appConfig.search_result_count)
+const bufferSize = 5 // 缓冲区大小（上下各多渲染几个）
+
+// 计算可见的项目范围
+const visibleRange = computed(() => {
+    const start = Math.max(0, Math.floor(scrollTop.value / props.uiConfig.result_item_height) - bufferSize)
+    const end = Math.min(
+        results.value.length,
+        start + visibleCount.value + bufferSize * 2
+    )
+    return { start, end }
+})
+
+// 可见的项目
+const visibleItems = computed(() => {
+    const { start, end } = visibleRange.value
+    return results.value.slice(start, end)
+})
+
+// 获取实际索引（考虑偏移）
+const getActualIndex = (visibleIndex: number) => {
+    return visibleRange.value.start + visibleIndex
+}
+
+// 正在加载的图标请求（用于取消）
+const loadingIcons = ref<Map<string, AbortController>>(new Map())
 
 const showMessage = (msg: string) => {
     message.value = msg
@@ -149,34 +196,77 @@ const getPathColor = (): string => {
     return getColorWithReducedOpacity(props.uiConfig.item_font_color, 0.6)
 }
 
-const loadIcons = async () => {
-    // 创建新的 Map
-    const newIconMap = new Map<string, string>()
+// 处理滚动事件
+const handleScroll = () => {
+    if (resultsListRef.value) {
+        scrollTop.value = resultsListRef.value.scrollTop
+    }
+}
+
+// 加载单个图标（带取消支持）
+const loadSingleIcon = async (path: string) => {
+    // 如果已经有正在加载的请求，先取消
+    const existingController = loadingIcons.value.get(path)
+    if (existingController) {
+        existingController.abort()
+    }
     
-    // 并行加载所有图标
-    const promises = results.value.map(async (item) => {
-        const path = item[1]
-        try {
-            const iconData = await invoke<number[]>('get_everything_icon', { path })
-            if (iconData && iconData.length > 0) {
-                const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
-                const url = URL.createObjectURL(blob)
-                newIconMap.set(path, url)
-            }
-        } catch (e) {
-            // console.error('Failed to load icon for', path, e)
+    // 创建新的 AbortController
+    const controller = new AbortController()
+    loadingIcons.value.set(path, controller)
+    
+    try {
+        const iconData = await invoke<number[]>('get_everything_icon', { path })
+        
+        // 检查是否被取消
+        if (controller.signal.aborted) {
+            return
         }
-    })
+        
+        if (iconData && iconData.length > 0) {
+            const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
+            const url = URL.createObjectURL(blob)
+            iconMap.value.set(path, url)
+        }
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            console.error('Failed to load icon for', path, e)
+        }
+    } finally {
+        loadingIcons.value.delete(path)
+    }
+}
+
+// 加载可见区域的图标
+const loadVisibleIcons = async () => {
+    const { start, end } = visibleRange.value
+    const pathsToLoad = results.value.slice(start, end).map(item => item[1])
     
-    await Promise.all(promises)
-    
-    // 释放旧的 URL
-    iconMap.value.forEach(url => URL.revokeObjectURL(url))
-    iconMap.value = newIconMap
+    // 并行加载可见区域的图标
+    await Promise.all(pathsToLoad.map(path => loadSingleIcon(path)))
+}
+
+// 图标加载成功
+const onIconLoad = (path: string) => {
+    // 可以在这里添加日志或统计
+}
+
+// 图标加载失败
+const onIconError = (path: string) => {
+    console.warn('Icon load failed for:', path)
+}
+
+// 取消所有正在加载的图标请求
+const cancelAllIconRequests = () => {
+    loadingIcons.value.forEach(controller => controller.abort())
+    loadingIcons.value.clear()
 }
 
 onUnmounted(() => {
+    // 清理所有图标 URL
     iconMap.value.forEach(url => URL.revokeObjectURL(url))
+    // 取消所有进行中的请求
+    cancelAllIconRequests()
 })
 
 const performSearch = async (text: string) => {
@@ -186,15 +276,22 @@ const performSearch = async (text: string) => {
     }
 
     isSearching.value = true
+    
+    // 取消之前的图标请求
+    cancelAllIconRequests()
+    iconMap.value.forEach(url => URL.revokeObjectURL(url))
+    iconMap.value.clear()
+    
     try {
         const searchResults: Array<[number, string, string]> = await invoke('handle_everything_search', { searchText: text })
         results.value = searchResults
         selectedIndex.value = 0
+        scrollTop.value = 0
         if (resultsListRef.value) {
             resultsListRef.value.scrollTop = 0
         }
-        // 加载图标
-        loadIcons()
+        // 只加载可见区域的图标
+        await loadVisibleIcons()
     } catch (error) {
         console.error('Everything search failed:', error)
     } finally {
@@ -209,14 +306,24 @@ const performSearch = async (text: string) => {
     }
 }
 
-
 watch(() => props.searchText, (newText) => {
     performSearch(newText)
 })
 
+// 监听滚动，动态加载图标
+watch(visibleRange, () => {
+    loadVisibleIcons()
+}, { deep: true })
+
 const handleItemClick = (index: number) => {
     selectedIndex.value = index
+    emit('item-click', index)
     launchItem(index)
+}
+
+const handleItemContextmenu = (index: number, event: MouseEvent) => {
+    selectedIndex.value = index
+    emit('item-contextmenu', index, event)
 }
 
 const launchItem = async (index: number) => {
@@ -314,6 +421,9 @@ onMounted(async () => {
     cursor: pointer;
     transition: background-color 0.2s;
     flex-shrink: 0;
+    position: absolute;
+    width: 100%;
+    left: 0;
 }
 
 .result-item:hover {
@@ -377,5 +487,11 @@ onMounted(async () => {
     z-index: 10;
     pointer-events: none;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.spacer {
+    position: relative;
+    width: 100%;
+    pointer-events: none;
 }
 </style>

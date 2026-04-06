@@ -434,6 +434,82 @@ pub async fn handle_everything_search<R: Runtime>(
     Ok(Vec::new())
 }
 
+/// 在资源管理器中打开文件所在目录
+#[tauri::command]
+pub async fn open_file_parent_folder<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    _window: tauri::Window<R>,
+    path: String,
+) -> Result<bool, String> {
+    use crate::utils::windows::shell_execute_open;
+    use std::path::Path;
+
+    let target_path = Path::new(&path);
+    let folder_to_open = if target_path.is_dir() {
+        target_path
+    } else {
+        match target_path.parent() {
+            Some(parent) => parent,
+            None => {
+                return Err("无法获取父目录".to_string());
+            }
+        }
+    };
+
+    if !folder_to_open.exists() {
+        return Err(format!("目录不存在: {}", folder_to_open.display()));
+    }
+
+    match shell_execute_open(folder_to_open) {
+        Ok(_) => Ok(true),
+        Err(e) => Err(format!("打开文件夹失败: {:?}", e)),
+    }
+}
+
+/// 以管理员身份运行文件
+#[tauri::command]
+pub async fn launch_path_as_admin<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    _window: tauri::Window<R>,
+    path: String,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let program_path = Path::new(&path);
+    let working_directory = program_path.parent().unwrap_or_else(|| Path::new("."));
+
+    let program_path_wide: Vec<u16> = program_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let working_directory_wide: Vec<u16> = working_directory
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let lp_verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut sei: SHELLEXECUTEINFOW = std::mem::zeroed();
+        sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        sei.lpVerb = PCWSTR::from_raw(lp_verb.as_ptr());
+        sei.lpFile = PCWSTR::from_raw(program_path_wide.as_ptr());
+        sei.lpDirectory = PCWSTR::from_raw(working_directory_wide.as_ptr());
+        sei.nShow = SW_SHOWNORMAL.0;
+        sei.fMask = SEE_MASK_NOASYNC;
+
+        if ShellExecuteExW(&mut sei).is_err() {
+            return Err("以管理员身份运行失败".to_string());
+        }
+    }
+    Ok(())
+}
+
 /// 在资源管理器中打开 Everything 搜索结果所在目录
 #[cfg(target_arch = "x86_64")]
 #[tauri::command]

@@ -58,6 +58,8 @@
         :ui-config="effective_ui_config"
         :app-config="app_config"
         :hover-color="hover_item_color"
+        @item-click="handleEverythingItemClick"
+        @item-contextmenu="contextResultItemEvent"
       />
     </div>
 
@@ -187,13 +189,23 @@ const effective_ui_config = computed(() => {
 const toggleEverythingMode = async () => {
   clearInlineParameterSession()
   if (inputContext.value === InputContext.Everything) {
+    // 从 Everything 切换回主搜索
     inputContext.value = InputContext.MainSearch
+    // 先聚焦输入框
+    await nextTick()
+    searchBarRef.value?.focus()
+    // 重新执行搜索
+    if (searchText.value) {
+      await sendSearchText(searchText.value)
+    } else {
+      await refresh_result_items()
+    }
   } else {
+    // 从主搜索切换到 Everything
     inputContext.value = InputContext.Everything
+    searchResults.value = []
+    selectedIndex.value = 0
   }
-  searchResults.value = []
-  selectedIndex.value = 0
-  // No need to call sendSearchText here, EverythingPanel will react to searchText prop
 }
 
 // Parameter Session Types
@@ -313,6 +325,9 @@ const parameterPreview = computed(() => {
 })
 
 const footerStatusText = computed(() => {
+  if (isEverythingMode.value) {
+    return t('everything.mode')
+  }
   if (is_refreshing_dataset.value) {
     return t('app.refreshing_dataset')
   }
@@ -354,9 +369,50 @@ const resultItemMenuRef = ref<InstanceType<typeof SubMenu> | null>(null)
 const searchBarMenuItems = computed(() => [{ name: t('menu.open_settings'), icon: Setting, action: () => { openSettingsWindow() } },
 { name: t('menu.refresh_database'), icon: Refresh, action: () => { refreshDataset() } }])
 
-const resultSubMenuItems = computed(() => [{ name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } },
-{ name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } },
-{ name: t('app.block_this_result'), icon: CircleClose, action: () => { blockCurrentResult() } }])
+const resultSubMenuItems = computed(() => {
+  if (isEverythingMode.value) {
+    // Everything 模式：根据文件类型显示菜单
+    const items = [
+      { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openEverythingFolder() } }
+    ]
+    
+    // 只有可执行文件才显示"以管理员身份运行"
+    if (isExecutableFile()) {
+      items.push({ name: t('app.run_as_admin'), icon: StarFilled, action: () => { runEverythingAsAdmin() } })
+    }
+    
+    return items
+  } else {
+    // 普通模式：显示所有三个选项
+    return [
+      { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } },
+      { name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } },
+      { name: t('app.block_this_result'), icon: CircleClose, action: () => { blockCurrentResult() } }
+    ]
+  }
+})
+
+// 判断当前选中的 Everything 结果是否是可执行文件
+const isExecutableFile = (): boolean => {
+  if (!everythingPanelRef.value) return false
+  const path = everythingPanelRef.value.getSelectedPath()
+  if (!path) return false
+  
+  // 检查是否是目录
+  if (path.endsWith('\\') || path.endsWith('/')) {
+    return false
+  }
+  
+  // 常见可执行文件扩展名（包括快捷方式）
+  const executableExtensions = [
+    '.exe', '.msi', '.bat', '.cmd', '.ps1', '.vbs', '.js',
+    '.com', '.scr', '.pif', '.application', '.gadget',
+    '.lnk'  // Windows 快捷方式
+  ]
+  
+  const lowerPath = path.toLowerCase()
+  return executableExtensions.some(ext => lowerPath.endsWith(ext))
+}
 
 // Methods
 const buildTemplatePreview = (template: string, args: string[], placeholderCount: number) => {
@@ -490,17 +546,23 @@ const refresh_result_items = async () => {
     menuItems.value = searchResults.value.map(([_id, item, command]: [number, string, string]) => ({ name: item, command }))
     const keys = searchResults.value.map(([key]: [number, string, string]) => key)
     if (isEverythingMode.value) {
-      menuIcons.value = new Array(keys.length).fill('/tauri.svg')
+      menuIcons.value = new Array(keys.length).fill('')
       right_tips.value = 'Everything Search'
     } else {
-      menuIcons.value = await getIcons(keys)
+      // 先初始化空图标，不阻塞搜索结果显示
+      menuIcons.value = new Array(keys.length).fill('')
       right_tips.value = getSearchModelLabel(current_search_model.value)
+      // 异步加载图标，不阻塞UI
+      loadIconsAsync(keys)
     }
   } else {
     menuItems.value = latest_launch_program.value.map(([_id, item, command]: [number, string, string]) => ({ name: item, command }))
     const keys = latest_launch_program.value.map(([key]: [number, string, string]) => key)
-    menuIcons.value = await getIcons(keys)
+    // 先初始化空图标
+    menuIcons.value = new Array(keys.length).fill('')
     right_tips.value = t('app.recent_open')
+    // 异步加载图标
+    loadIconsAsync(keys)
   }
   try {
     status_reason_code.value = await invoke<string>('command_get_search_status_tip')
@@ -647,20 +709,80 @@ const startPreloadResource = async (program_count: number) => {
   ])
 }
 
-const getIcons = async (keys: Array<number>) => {
-  let result: Array<string> = []
-  for (let key of keys) {
-    if (program_icons.value.has(key)) {
-      result.push(program_icons.value.get(key) as string)
+// 异步加载图标，不阻塞UI
+const loadIconsAsync = async (keys: Array<number>) => {
+  const BATCH_SIZE = 5
+  const BATCH_SIZE_URL = 2
+
+  // 分类程序ID：URL程序和普通程序
+  const urlStatus: boolean[] = await invoke('command_get_program_url_status')
+  const normalIds: number[] = []
+  const urlIds: number[] = []
+
+  for (let i = 0; i < keys.length; i++) {
+    if (i < urlStatus.length && urlStatus[i]) {
+      urlIds.push(keys[i])
     } else {
-      let iconData: number[] = await invoke('load_program_icon', { programGuid: key })
-      const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
-      const url = URL.createObjectURL(blob)
-      program_icons.value.set(key, url)
-      result.push(url)
+      normalIds.push(keys[i])
     }
   }
-  return result
+
+  const loadBatch = async (ids: number[], concurrency: number) => {
+    const activePromises = new Set<Promise<void>>()
+
+    for (const programId of ids) {
+      // 如果已经有缓存的图标，先显示缓存
+      if (program_icons.value.has(programId)) {
+        const cachedUrl = program_icons.value.get(programId)
+        const index = keys.indexOf(programId)
+        if (index !== -1 && cachedUrl) {
+          menuIcons.value[index] = cachedUrl
+        }
+        continue
+      }
+
+      if (activePromises.size >= concurrency) {
+        await Promise.race(activePromises)
+      }
+
+      const bgTask = (async () => {
+        try {
+          const iconData: number[] = await invoke('load_program_icon', {
+            programGuid: programId,
+          })
+
+          if (!iconData || iconData.length === 0) return
+
+          const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
+          const url = URL.createObjectURL(blob)
+          program_icons.value.set(programId, url)
+          
+          // 更新对应位置的图标
+          const index = keys.indexOf(programId)
+          if (index !== -1) {
+            menuIcons.value[index] = url
+          }
+        } catch (error: any) {
+          console.error(`Failed to load icon for ${programId}:`, error)
+        }
+      })()
+
+      const p = bgTask.then(() => {
+        activePromises.delete(p)
+      }).catch(() => {
+        activePromises.delete(p)
+      })
+
+      activePromises.add(p)
+    }
+    
+    await Promise.all(activePromises)
+  }
+
+  await Promise.all([
+    loadBatch(normalIds, BATCH_SIZE),
+    loadBatch(urlIds, BATCH_SIZE_URL)
+  ])
 }
 
 const launch_program = async (itemIndex: number, ctrlKey = false, shiftKey = false) => {
@@ -704,6 +826,10 @@ const launch_program = async (itemIndex: number, ctrlKey = false, shiftKey = fal
 
 const handleItemClick = (itemIndex: number, ctrlKey: boolean) => {
   launch_program(itemIndex, ctrlKey)
+}
+
+const handleEverythingItemClick = (itemIndex: number) => {
+  selectedIndex.value = itemIndex
 }
 
 const initSearchBar = () => {
@@ -810,8 +936,34 @@ const openFolder = async () => {
   await invoke('open_target_folder', { programGuid: selected[0] })
 }
 
+const openEverythingFolder = async () => {
+  if (!everythingPanelRef.value) return
+  const path = everythingPanelRef.value.getSelectedPath()
+  if (!path) return
+  
+  try {
+    await invoke('open_file_parent_folder', { path })
+  } catch (error) {
+    console.error('Failed to open folder:', error)
+    ElMessage.error(t('app.open_folder_failed'))
+  }
+}
+
 const runTargetProgramWithAdmin = () => {
   launch_program(selectedIndex.value, true, false)
+}
+
+const runEverythingAsAdmin = async () => {
+  if (!everythingPanelRef.value) return
+  const path = everythingPanelRef.value.getSelectedPath()
+  if (!path) return
+  
+  try {
+    await invoke('launch_path_as_admin', { path })
+  } catch (error) {
+    console.error('Failed to run as admin:', error)
+    ElMessage.error(t('app.run_as_admin_failed'))
+  }
 }
 
 const blockCurrentResult = async () => {
@@ -997,10 +1149,11 @@ main {
 }
 
 .unified-container {
+  flex: 1;
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
-  flex-shrink: 0;
+  display: flex;
 }
 </style>
 

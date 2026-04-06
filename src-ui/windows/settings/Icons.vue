@@ -70,7 +70,19 @@
                         <el-table v-loading="loading" :data="programList" style="width: 100%" height="100%">
                         <el-table-column :label="t('icon_management.icon')" width="80">
                             <template #default="scope">
-                                <img :src="getIconUrl(scope.row.icon_request_json)" class="program-icon" alt="icon" />
+                                <div class="icon-container">
+                                    <!-- 加载中显示spinner -->
+                                    <div v-if="isIconLoading(scope.row.icon_request_json) && !getIconUrl(scope.row.icon_request_json)" class="icon-spinner">
+                                        <div class="spinner"></div>
+                                    </div>
+                                    <!-- 有图标时显示图片 -->
+                                    <img 
+                                        v-else
+                                        :src="getIconUrl(scope.row.icon_request_json)" 
+                                        class="program-icon" 
+                                        alt="icon" 
+                                    />
+                                </div>
                             </template>
                         </el-table-column>
 
@@ -120,6 +132,7 @@ const {
     handleSearch,
     toggleShowAll,
     getIconUrl,
+    isIconLoading,
     refreshIcon
 } = useProgramSearch()
 
@@ -232,6 +245,37 @@ handleSearch()
     width: 32px;
     height: 32px;
     object-fit: contain;
+}
+
+.icon-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+}
+
+.icon-spinner {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.spinner {
+    width: 60%;
+    height: 60%;
+    border: 2px solid rgba(128, 128, 128, 0.2);
+    border-top-color: rgba(128, 128, 128, 0.8);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .path-text {

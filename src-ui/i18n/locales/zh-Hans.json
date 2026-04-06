@@ -10,6 +10,8 @@
     "open_file_location": "打开文件位置",
     "run_as_admin": "以管理员身份运行",
     "block_this_result": "屏蔽该结果",
+    "open_folder_failed": "打开文件夹失败",
+    "run_as_admin_failed": "以管理员身份运行失败",
     "block_success_title": "已添加到屏蔽列表",
     "block_success_body": "刷新数据库后生效",
     "start_refresh": "开始刷新",
@@ -591,6 +593,7 @@
     "export_logs_cancelled": "已取消导出日志"
   },
   "everything": {
+    "mode": "Everything 模式",
     "everything_search_settings": "Everything搜索设置",
     "sort_method": "排序方式",
     "sort_method_tooltip": "设置搜索结果的排序方式",

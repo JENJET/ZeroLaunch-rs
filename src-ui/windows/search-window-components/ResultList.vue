@@ -27,7 +27,13 @@
           marginRight: Math.round(uiConfig.result_item_height * layoutConstants.iconMarginRatio) + 'px',
         }"
       >
+        <!-- 加载中显示spinner -->
+        <div v-if="!menuIcons[index]" class="icon-spinner">
+          <div class="spinner"></div>
+        </div>
+        <!-- 有图标时显示图片 -->
         <img
+          v-else
           :src="menuIcons[index]"
           class="custom-image"
           alt="icon"
@@ -108,6 +114,8 @@ const handleItemClick = (index: number, ctrlKey: boolean) => {
 const handleContextMenu = (index: number, event: MouseEvent) => {
   emit('item-contextmenu', index, event)
 }
+
+
 
 defineExpose({
   resultsListRef,
@@ -192,6 +200,39 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   width: 100%;
+}
+
+.icon-placeholder {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.1) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-spinner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinner {
+  width: 60%;
+  height: 60%;
+  border: 2px solid rgba(128, 128, 128, 0.2);
+  border-top-color: rgba(128, 128, 128, 0.8);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .item-command {

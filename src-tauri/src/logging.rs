@@ -17,7 +17,18 @@ use std::path::Path;
 use std::sync::OnceLock;
 use tracing::{debug, error, info, warn, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{self, reload, EnvFilter};
+
+/// 本地时间格式化器（使用 chrono::Local）
+struct LocalTimeFormatter;
+
+impl FormatTime for LocalTimeFormatter {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = Local::now();
+        write!(w, "{}", now.format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+    }
+}
 
 /// 全局日志级别重载句柄
 static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
@@ -111,7 +122,8 @@ pub fn init_logging(config: Option<LoggingConfig>) -> tracing_appender::non_bloc
             .with_target(true)
             .with_thread_ids(true)
             .with_file(true)
-            .with_line_number(true);
+            .with_line_number(true)
+            .with_timer(LocalTimeFormatter);
 
         let console_layer = tracing_subscriber::fmt::layer()
             .with_writer(std::io::stdout)
@@ -137,7 +149,8 @@ pub fn init_logging(config: Option<LoggingConfig>) -> tracing_appender::non_bloc
             .with_target(true)
             .with_thread_ids(true)
             .with_file(true)
-            .with_line_number(true);
+            .with_line_number(true)
+            .with_timer(LocalTimeFormatter);
 
         tracing_subscriber::registry()
             .with(filter)

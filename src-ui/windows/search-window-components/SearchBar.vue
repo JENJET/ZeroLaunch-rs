@@ -89,7 +89,7 @@ defineExpose({
   align-items: center;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
-  flex-grow: 1;
+  flex-grow: 0;
   min-width: 0;
   width: 100%;
 }

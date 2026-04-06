@@ -4,10 +4,12 @@ use crate::error::OptionExt;
 use crate::modules::config::default::ICON_CACHE_DIR;
 use crate::modules::icon_manager::config::{IconManagerConfig, RuntimeIconManagerConfig};
 use bincode::Encode;
-use dashmap::DashSet;
+use dashmap::DashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::async_runtime::RwLock;
+use tokio::sync::Mutex;
 use tracing::warn;
 pub mod config;
 use serde::{Deserialize, Serialize};
@@ -30,18 +32,35 @@ impl IconRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+struct IconCacheEntry {
+    /// 缓存文件最后更新时间
+    last_updated: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRequest {
+    /// 请求开始时间
+    #[allow(dead_code)]
+    started_at: Instant,
+}
+
 #[derive(Debug)]
 struct IconManagerInner {
     /// 默认的应用图标的路径
     default_app_icon_path: String,
     /// 默认的网址图片路径
     default_web_icon_path: String,
-    /// 已缓存的图标哈希集合 (文件名)
-    cached_icon_hashes: DashSet<String>,
+    /// 已缓存的图标信息 (hash -> 缓存条目)
+    cached_icons: DashMap<String, IconCacheEntry>,
+    /// 正在处理的请求 (hash -> 请求信息)
+    pending_requests: Arc<Mutex<DashMap<String, PendingRequest>>>,
     /// 要不要开启图片缓存
     enable_icon_cache: bool,
     /// 要不要联网来获取网址的图标
     enable_online: bool,
+    /// 缓存刷新间隔（秒）
+    cache_refresh_interval_secs: u64,
 }
 
 impl IconManagerInner {
@@ -51,47 +70,84 @@ impl IconManagerInner {
             default_web_icon_path: runtime_config.default_web_icon_path,
             enable_icon_cache: true,
             enable_online: true,
-            cached_icon_hashes: DashSet::new(),
+            cached_icons: DashMap::new(),
+            pending_requests: Arc::new(Mutex::new(DashMap::new())),
+            cache_refresh_interval_secs: 60, // 默认1分钟
         };
         inner.init();
         inner
     }
 
     fn init(&mut self) {
-        self.cached_icon_hashes = self.scan_cached_icons();
+        self.cached_icons = self.scan_cached_icons();
     }
 
     pub fn load_from_config(&mut self, config: Arc<IconManagerConfig>) {
         self.enable_icon_cache = config.get_enable_icon_cache();
         self.enable_online = config.get_enable_online();
 
-        if self.enable_icon_cache && self.cached_icon_hashes.is_empty() {
-            self.cached_icon_hashes = self.scan_cached_icons();
+        if self.enable_icon_cache && self.cached_icons.is_empty() {
+            self.cached_icons = self.scan_cached_icons();
         }
     }
 
     pub async fn get_icon(&self, request: IconRequest) -> Vec<u8> {
         let hash_name = request.get_hash_string() + ".png";
 
-        // 1. 缓存策略
-        if self.enable_icon_cache && self.cached_icon_hashes.contains(&hash_name) {
-            let cached_icon_dir = ICON_CACHE_DIR.clone();
-            let icon_path = Path::new(&cached_icon_dir).join(&hash_name);
-            let identity = ImageIdentity::File(
-                icon_path
-                    .to_str()
-                    .expect_programming("图标路径转换为字符串失败")
-                    .to_string(),
-            );
-            return ImageProcessor::load_image(&identity).await;
+        // 1. 检查是否有缓存
+        let has_cache = self.enable_icon_cache && self.cached_icons.contains_key(&hash_name);
+
+        if has_cache {
+            // 1.1 有缓存，立即返回旧缓存（保证快速显示）
+            let cached_data = self.load_from_cache(&hash_name).await;
+
+            // 1.2 检查是否需要后台刷新
+            let should_refresh = self.should_refresh_cache(&hash_name);
+
+            if should_refresh {
+                // 后台静默更新，不阻塞当前返回
+                self.spawn_background_refresh(request.clone(), hash_name.clone());
+            }
+
+            return cached_data;
         }
 
-        // 2. 处理不同类型的请求
+        // 2. 没有缓存，检查是否已有正在进行的相同请求
+        {
+            let pending = self.pending_requests.lock().await;
+            if pending.contains_key(&hash_name) {
+                // 队列中已有相同请求，直接返回默认图标，避免重复加载
+                warn!(
+                    "Duplicate icon request detected for {}, returning default icon",
+                    hash_name
+                );
+                return self.get_default_icon(&request).await;
+            }
+        }
+
+        // 3. 注册新请求到队列
+        {
+            let pending = self.pending_requests.lock().await;
+            pending.insert(
+                hash_name.clone(),
+                PendingRequest {
+                    started_at: Instant::now(),
+                },
+            );
+        }
+
+        // 4. 处理不同类型的请求（实际加载图标）
         let (mut icon_data, is_default) = match request {
             IconRequest::Path(path) => self.handle_path_request(path).await,
             IconRequest::Url(url) => self.handle_url_request(url).await,
             IconRequest::Extension(ext) => self.handle_extension_request(ext).await,
         };
+
+        // 5. 从队列中移除已完成的请求
+        {
+            let pending = self.pending_requests.lock().await;
+            pending.remove(&hash_name);
+        }
 
         // 裁剪透明白边
         if !icon_data.is_empty() {
@@ -100,23 +156,9 @@ impl IconManagerInner {
             }
         }
 
-        // 3. 写入缓存
+        // 6. 写入缓存
         if self.enable_icon_cache && !is_default && !icon_data.is_empty() {
-            let icon_data_clone = icon_data.clone();
-            let hash_name_clone = hash_name.clone();
-            tauri::async_runtime::spawn(async move {
-                let cached_icon_dir = ICON_CACHE_DIR.clone();
-                let icon_path = Path::new(&cached_icon_dir).join(hash_name_clone);
-                let _ = tokio::fs::write(
-                    icon_path
-                        .to_str()
-                        .expect_programming("缓存路径转换为字符串失败")
-                        .to_string(),
-                    icon_data_clone,
-                )
-                .await;
-            });
-            self.cached_icon_hashes.insert(hash_name);
+            self.save_to_cache(&hash_name, icon_data.clone()).await;
         }
 
         icon_data
@@ -169,8 +211,137 @@ impl IconManagerInner {
         }
     }
 
-    fn scan_cached_icons(&self) -> DashSet<String> {
-        let result = DashSet::new();
+    /// 从缓存加载图标
+    async fn load_from_cache(&self, hash_name: &str) -> Vec<u8> {
+        let cached_icon_dir = ICON_CACHE_DIR.clone();
+        let icon_path = Path::new(&cached_icon_dir).join(hash_name);
+        let identity = ImageIdentity::File(
+            icon_path
+                .to_str()
+                .expect_programming("缓存路径转换为字符串失败")
+                .to_string(),
+        );
+        ImageProcessor::load_image(&identity).await
+    }
+
+    /// 保存图标到缓存（使用临时文件+原子重命名）
+    async fn save_to_cache(&self, hash_name: &str, icon_data: Vec<u8>) {
+        let cached_icon_dir = ICON_CACHE_DIR.clone();
+        let icon_path = Path::new(&cached_icon_dir).join(hash_name);
+        let temp_path = icon_path.with_extension("tmp");
+
+        let icon_data_clone = icon_data.clone();
+        let hash_name_clone = hash_name.to_string();
+        let cached_icons_clone = self.cached_icons.clone();
+
+        tauri::async_runtime::spawn(async move {
+            // 先写入临时文件
+            if tokio::fs::write(&temp_path, icon_data_clone).await.is_ok() {
+                // 原子性重命名
+                if tokio::fs::rename(&temp_path, &icon_path).await.is_ok() {
+                    // 更新缓存记录
+                    cached_icons_clone.insert(
+                        hash_name_clone,
+                        IconCacheEntry {
+                            last_updated: Instant::now(),
+                        },
+                    );
+                }
+            }
+        });
+    }
+
+    /// 检查是否需要刷新缓存
+    fn should_refresh_cache(&self, hash_name: &str) -> bool {
+        if let Some(entry) = self.cached_icons.get(hash_name) {
+            let elapsed = entry.last_updated.elapsed();
+            elapsed.as_secs() >= self.cache_refresh_interval_secs
+        } else {
+            false
+        }
+    }
+
+    /// 后台静默刷新图标
+    fn spawn_background_refresh(&self, request: IconRequest, hash_name: String) {
+        let pending_clone = self.pending_requests.clone();
+        let cached_icons_clone = self.cached_icons.clone();
+
+        tauri::async_runtime::spawn(async move {
+            // 检查是否已有正在进行的刷新请求
+            {
+                let pending = pending_clone.lock().await;
+                if pending.contains_key(&hash_name) {
+                    return; // 已有刷新任务，跳过
+                }
+            }
+
+            // 注册刷新请求
+            {
+                let pending = pending_clone.lock().await;
+                pending.insert(
+                    hash_name.clone(),
+                    PendingRequest {
+                        started_at: Instant::now(),
+                    },
+                );
+            }
+
+            // 执行刷新（不裁剪白边，保持一致性）
+            let icon_data = match request {
+                IconRequest::Path(path) => {
+                    ImageProcessor::load_image(&ImageIdentity::File(path)).await
+                }
+                IconRequest::Url(url) => ImageProcessor::load_image(&ImageIdentity::Web(url)).await,
+                IconRequest::Extension(ext) => {
+                    ImageProcessor::load_image(&ImageIdentity::Extension(ext)).await
+                }
+            };
+
+            // 从队列移除
+            {
+                let pending = pending_clone.lock().await;
+                pending.remove(&hash_name);
+            }
+
+            // 如果成功获取到新图标，更新缓存
+            if !icon_data.is_empty() {
+                let cached_icon_dir = ICON_CACHE_DIR.clone();
+                let icon_path = Path::new(&cached_icon_dir).join(&hash_name);
+                let temp_path = icon_path.with_extension("tmp");
+
+                if tokio::fs::write(&temp_path, icon_data).await.is_ok()
+                    && tokio::fs::rename(&temp_path, &icon_path).await.is_ok()
+                {
+                    let hash_for_log = hash_name.clone();
+                    tracing::debug!("Icon cache refreshed: {}", hash_for_log);
+
+                    cached_icons_clone.insert(
+                        hash_name,
+                        IconCacheEntry {
+                            last_updated: Instant::now(),
+                        },
+                    );
+                }
+            }
+        });
+    }
+
+    /// 获取默认图标
+    async fn get_default_icon(&self, request: &IconRequest) -> Vec<u8> {
+        match request {
+            IconRequest::Path(_) | IconRequest::Extension(_) => {
+                ImageProcessor::load_image(&ImageIdentity::File(self.default_app_icon_path.clone()))
+                    .await
+            }
+            IconRequest::Url(_) => {
+                ImageProcessor::load_image(&ImageIdentity::File(self.default_web_icon_path.clone()))
+                    .await
+            }
+        }
+    }
+
+    fn scan_cached_icons(&self) -> DashMap<String, IconCacheEntry> {
+        let result = DashMap::new();
         if !self.enable_icon_cache {
             return result;
         }
@@ -180,8 +351,16 @@ impl IconManagerInner {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let file_name = entry.file_name();
-                    let file_name = file_name.to_string_lossy();
-                    result.insert(file_name.into_owned());
+                    let file_name_str = file_name.to_string_lossy().into_owned();
+                    // 只关注 .png 文件
+                    if file_name_str.ends_with(".png") {
+                        result.insert(
+                            file_name_str.clone(),
+                            IconCacheEntry {
+                                last_updated: Instant::now(), // 初始化为当前时间，后续会从文件系统读取
+                            },
+                        );
+                    }
                 }
             }
             Err(e) => warn!("Error reading icon cache directory: {}", e),
@@ -191,8 +370,31 @@ impl IconManagerInner {
 
     pub async fn get_everything_icon(&self, path: String) -> Vec<u8> {
         let path_lower = path.to_lowercase();
+        let path_obj = Path::new(&path);
 
-        // 1. Executables/Links/URLs -> Direct load, no cache
+        // 1. 文件夹 → 使用缓存（文件夹图标固定，高频复用）
+        if path_obj.is_dir() {
+            return self
+                .get_icon(IconRequest::Extension("folder".to_string()))
+                .await;
+        }
+
+        // 2. 常见文档/压缩类型 → 使用扩展名缓存（高频复用）
+        let common_extensions = [
+            ".txt", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar",
+            ".7z", ".tar", ".gz", ".csv", ".json", ".xml", ".md", ".rtf", ".odt",
+        ];
+
+        if let Some(ext) = path_obj.extension().and_then(|e| e.to_str()) {
+            let ext_lower = format!(".{}", ext.to_lowercase());
+
+            if common_extensions.contains(&ext_lower.as_str()) {
+                // 常见类型：使用缓存
+                return self.get_icon(IconRequest::Extension(ext_lower)).await;
+            }
+        }
+
+        // 3. 可执行文件/快捷方式 → 不缓存（路径唯一，缓存命中率低）
         if path_lower.ends_with(".exe")
             || path_lower.ends_with(".lnk")
             || path_lower.ends_with(".url")
@@ -200,7 +402,7 @@ impl IconManagerInner {
             return ImageProcessor::load_image(&ImageIdentity::File(path)).await;
         }
 
-        // 2. Images -> Direct load, resize if needed
+        // 4. 图片文件 → 直接加载 + resize（image crate 很快，不需要缓存）
         let image_extensions = [
             ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg",
         ];
@@ -214,27 +416,8 @@ impl IconManagerInner {
             return data;
         }
 
-        // 3. Folders -> Cache as "folder" extension
-        if Path::new(&path).is_dir() {
-            return self
-                .get_icon(IconRequest::Extension("folder".to_string()))
-                .await;
-        }
-
-        // 4. Other files -> Extension based cache via get_icon
-        let extension = Path::new(&path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        if extension.is_empty() {
-            return ImageProcessor::load_image(&ImageIdentity::File(path)).await;
-        }
-
-        // Use get_icon to handle caching automatically
-        self.get_icon(IconRequest::Extension(format!(".{}", extension)))
-            .await
+        // 5. 其他罕见类型 → 不缓存（避免污染缓存）
+        ImageProcessor::load_image(&ImageIdentity::File(path)).await
     }
 }
 
