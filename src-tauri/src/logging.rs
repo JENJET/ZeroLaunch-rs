@@ -10,13 +10,12 @@ use crate::error::OptionExt;
 use crate::modules::config::default::LOG_DIR;
 use backtrace::Backtrace;
 use chrono::{DateTime, Local};
-use std::fs::File;
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::panic;
-use std::path::Path;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing::{debug, error, info, warn, Level};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{self, reload, EnvFilter};
 
@@ -27,6 +26,82 @@ impl FormatTime for LocalTimeFormatter {
     fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
         let now = Local::now();
         write!(w, "{}", now.format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+    }
+}
+
+/// 自定义的按日滚动的日志文件写入器
+struct DailyRollingFileWriter {
+    log_dir: PathBuf,
+    file_prefix: String,
+    current_date: Arc<Mutex<String>>,
+    current_file: Arc<Mutex<File>>,
+}
+
+impl DailyRollingFileWriter {
+    fn new(log_dir: PathBuf, file_prefix: String) -> Result<Self, std::io::Error> {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let file_name = format!("{}.{}.log", file_prefix, today);
+        let file_path = log_dir.join(&file_name);
+
+        // 确保目录存在
+        fs::create_dir_all(&log_dir)?;
+
+        // 创建或打开文件
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)?;
+
+        Ok(Self {
+            log_dir,
+            file_prefix,
+            current_date: Arc::new(Mutex::new(today)),
+            current_file: Arc::new(Mutex::new(file)),
+        })
+    }
+
+    /// 检查是否需要滚动到新文件
+    fn check_and_rotate(&self) -> Result<(), std::io::Error> {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let mut current_date = self.current_date.lock().unwrap();
+
+        if *current_date != today {
+            // 日期变化，创建新文件
+            let file_name = format!("{}.{}.log", self.file_prefix, today);
+            let file_path = self.log_dir.join(&file_name);
+
+            let new_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)?;
+
+            *self.current_file.lock().unwrap() = new_file;
+            *current_date = today;
+
+            info!("日志文件已滚动到: {}", file_name);
+        }
+
+        Ok(())
+    }
+
+    /// 获取当前文件的可变引用
+    fn get_file(&self) -> Result<std::sync::MutexGuard<'_, File>, std::io::Error> {
+        self.check_and_rotate()?;
+        self.current_file
+            .lock()
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+}
+
+impl Write for DailyRollingFileWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut file = self.get_file()?;
+        file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut file = self.get_file()?;
+        file.flush()
     }
 }
 
@@ -78,15 +153,13 @@ pub fn init_logging(config: Option<LoggingConfig>) -> tracing_appender::non_bloc
     // 打印系统信息
     print_system_info();
 
-    // 创建按日期滚动的日志文件
-    let file_appender = RollingFileAppender::new(
-        Rotation::DAILY,
-        LOG_DIR.clone(),
-        format!("{}.log", config.log_file_prefix),
-    );
+    // 创建自定义的按日期滚动的日志文件写入器
+    let file_writer =
+        DailyRollingFileWriter::new(PathBuf::from(&*LOG_DIR), config.log_file_prefix.clone())
+            .expect("无法创建日志文件写入器");
 
     // 创建非阻塞的日志写入器
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_writer);
 
     // 创建可重载的过滤器
     // 设置默认级别为 INFO，但对当前软件使用配置的级别

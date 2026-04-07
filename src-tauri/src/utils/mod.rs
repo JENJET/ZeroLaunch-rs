@@ -9,17 +9,16 @@ pub mod ui_controller;
 pub mod waiting_hashmap;
 pub mod windows;
 use chrono::{Local, NaiveDate};
-use time::OffsetDateTime;
+
 /// 生成当前日期的函数
 pub fn generate_current_date() -> String {
     let current_date = Local::now().date_naive();
     current_date.format("%Y-%m-%d").to_string()
 }
 
-/// 生成当前的时间
+/// 生成当前的时间戳（Unix timestamp）
 pub fn get_current_time() -> i64 {
-    let now = OffsetDateTime::now_utc();
-    now.unix_timestamp()
+    Local::now().timestamp()
 }
 
 /// 比较日期字符串与当前日期的函数

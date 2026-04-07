@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::{Datelike, Local, Timelike};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use std::env;
@@ -570,7 +571,19 @@ async fn create_portable_zip(exe_path: &Path, zip_name: &str, arch: TargetArch) 
     let zip_path = Path::new(zip_name);
     let file = fs::File::create(zip_path)?;
     let mut zip = ZipWriter::new(file);
-    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    
+    // 使用当前本地时间作为文件时间戳
+    let now = Local::now();
+    let options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::from_date_and_time(
+            now.year() as u16,
+            now.month() as u8,
+            now.day() as u8,
+            now.hour() as u8,
+            now.minute() as u8,
+            now.second() as u8,
+        ).unwrap_or_default());
 
     // 添加可执行文件
     let exe_name = exe_path.file_name().unwrap().to_str().unwrap();
