@@ -185,15 +185,21 @@ export function createMainSearchShortcutHandler(
     const handleEscape = (isMenuVisible: boolean): void => {
         // ✅ ESC 键处理优先级：
         // 1. 有右键菜单 → 关闭菜单
-        // 2. 没有菜单但有搜索文本 → 清空搜索文本
+        // 2. 没有菜单但有搜索文本 → 根据配置决定是否清空搜索文本
         // 3. 没有菜单且没有搜索文本 → 关闭窗口
         
         if (isMenuVisible) {
             // 优先级 1：关闭右键菜单
             resultItemMenuRef.value?.hideMenu()
         } else if (searchText.value.length > 0) {
-            // 优先级 2：清空搜索文本
-            searchText.value = ''
+            // 优先级 2：根据配置决定是否清空搜索文本
+            if (!appConfig.value.is_esc_hide_window_priority) {
+                // 如果未开启ESC优先隐藏窗口，则清空搜索文本
+                searchText.value = ''
+            } else {
+                // 如果开启了ESC优先隐藏窗口，则直接关闭窗口而不清空搜索文本
+                invoke('hide_window').catch(console.error)
+            }
         } else {
             // 优先级 3：关闭窗口
             invoke('hide_window').catch(console.error)
