@@ -132,6 +132,9 @@ import { mergeUiConfig } from '../stores/remote_config'
 
 const { t } = useI18n()
 
+// ✅ 搜索文本保留的时间阈值（毫秒）
+const SEARCH_TEXT_RETAIN_THRESHOLD_MS = 3000
+
 // State
 const app_config = ref<AppConfig>(default_app_config())
 const ui_config = ref<UIConfig>(default_ui_config())
@@ -172,6 +175,8 @@ const windowSize = ref<{ width: number; height: number; }>({ width: 800, height:
 const scaleFactor = ref<number>(1)
 // ✅ 标记是否已经初始化过图标缓存
 const icons_initialized = ref<boolean>(false)
+// ✅ 记录窗口关闭的时间戳，用于判断是否在10秒内重新打开
+const lastHideTime = ref<number>(0)
 
 // 输入上下文状态
 const inputContext = ref<InputContext>(InputContext.MainSearch)
@@ -1253,6 +1258,19 @@ onMounted(async () => {
 
   window.addEventListener('click', handleClickOutside)
   unlisten.push(await listen('show_window', () => {
+    // ✅ 检查是否在阈值时间内重新打开
+    const now = Date.now()
+    const timeSinceLastHide = now - lastHideTime.value
+    
+    if (timeSinceLastHide > SEARCH_TEXT_RETAIN_THRESHOLD_MS || lastHideTime.value === 0) {
+      // 超过阈值时间或首次打开，清空搜索文本
+      searchText.value = ''
+      console.log(`Search text cleared (first open or >${SEARCH_TEXT_RETAIN_THRESHOLD_MS}ms since last hide)`)
+    } else {
+      // 阈值时间内重新打开，保留搜索文本
+      console.log(`Search text preserved (${timeSinceLastHide}ms since last hide)`)
+    }
+    
     focusSearchInput()
     is_visible.value = true
     setTimeout(() => {
@@ -1328,6 +1346,8 @@ onMounted(async () => {
     // ✅ 不再清空搜索文本，保留上一次的搜索内容
     // initSearchBar()  // 注释掉，避免清除搜索文本
     is_visible.value = false
+    // ✅ 记录窗口关闭的时间戳
+    lastHideTime.value = Date.now()
   }))
 
   const currentWindow = getCurrentWindow()
