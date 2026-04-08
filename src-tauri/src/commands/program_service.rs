@@ -826,3 +826,63 @@ pub async fn command_get_program_path(program_guid: String) -> Result<String, St
 
     Ok(program.launch_method.get_text().clone())
 }
+
+/// 复制程序路径到剪贴板
+#[tauri::command]
+pub async fn command_copy_program_path_to_clipboard(program_guid: String) -> Result<(), String> {
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
+    let state = ServiceLocator::get_state();
+    let program_manager = state.get_program_manager();
+
+    let program = program_manager
+        .get_program_by_guid(guid)
+        .await
+        .ok_or_else(|| "Program not found".to_string())?;
+
+    let path = program.launch_method.get_text().clone();
+
+    // 使用 arboard 复制到剪贴板
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => {
+            clipboard
+                .set_text(&path)
+                .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+            info!("✅ 已复制路径到剪贴板: {}", path);
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to initialize clipboard: {}", e)),
+    }
+}
+
+/// 复制程序名称到剪贴板
+#[tauri::command]
+pub async fn command_copy_program_name_to_clipboard(program_guid: String) -> Result<(), String> {
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
+    let state = ServiceLocator::get_state();
+    let program_manager = state.get_program_manager();
+
+    let program = program_manager
+        .get_program_by_guid(guid)
+        .await
+        .ok_or_else(|| "Program not found".to_string())?;
+
+    let name = program.show_name.clone();
+
+    // 使用 arboard 复制到剪贴板
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => {
+            clipboard
+                .set_text(&name)
+                .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+            info!("✅ 已复制名称到剪贴板: {}", name);
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to initialize clipboard: {}", e)),
+    }
+}

@@ -10,6 +10,8 @@
     "open_file_location": "開啟檔案位置",
     "run_as_admin": "以系統管理員身分執行",
     "block_this_result": "屏蔽該結果",
+    "copy_path": "拷貝路徑",
+    "copy_name": "拷貝名字",
     "open_folder_failed": "開啟資料夾失敗",
     "run_as_admin_failed": "以系統管理員身分執行失敗",
     "block_success_title": "已新增到屏蔽清單",

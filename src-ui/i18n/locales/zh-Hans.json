@@ -10,6 +10,8 @@
     "open_file_location": "打开文件位置",
     "run_as_admin": "以管理员身份运行",
     "block_this_result": "屏蔽该结果",
+    "copy_path": "拷贝路径",
+    "copy_name": "拷贝名字",
     "open_folder_failed": "打开文件夹失败",
     "run_as_admin_failed": "以管理员身份运行失败",
     "block_success_title": "已添加到屏蔽列表",

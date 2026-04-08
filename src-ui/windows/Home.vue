@@ -108,7 +108,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { FolderOpened, Refresh, Setting, StarFilled, CircleClose } from '@element-plus/icons-vue'
+import { FolderOpened, Refresh, Setting, StarFilled, CircleClose, DocumentCopy, Files } from '@element-plus/icons-vue'
 
 import { reduceOpacity } from '../utils/color'
 import { initializeLanguage } from '../i18n'
@@ -375,7 +375,9 @@ const resultSubMenuItems = computed(() => {
   if (isEverythingMode.value) {
     // Everything 模式：根据文件类型显示菜单
     const items = [
-      { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openEverythingFolder() } }
+      { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openEverythingFolder() } },
+      { name: t('app.copy_path'), icon: DocumentCopy, action: () => { copyPath() } },
+      { name: t('app.copy_name'), icon: Files, action: () => { copyName() } }
     ]
     
     // 只有可执行文件才显示"以管理员身份运行"
@@ -385,10 +387,12 @@ const resultSubMenuItems = computed(() => {
     
     return items
   } else {
-    // 普通模式：显示所有三个选项
+    // 普通模式：显示所有五个选项，屏蔽结果放在最后
     return [
       { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } },
       { name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } },
+      { name: t('app.copy_path'), icon: DocumentCopy, action: () => { copyPath() } },
+      { name: t('app.copy_name'), icon: Files, action: () => { copyName() } },
       { name: t('app.block_this_result'), icon: CircleClose, action: () => { blockCurrentResult() } }
     ]
   }
@@ -953,7 +957,18 @@ const handleClickOutside = () => {
 const focusSearchInput = () => {
   searchBarMenuBuf.value?.hideMenu()
   resultItemMenuRef.value?.hideMenu()
-  initSearchBar()
+  // ✅ 不再调用 initSearchBar()，保留上一次的搜索内容
+  // initSearchBar()  // 注释掉，避免清除搜索文本
+  
+  // 只重置选中索引和滚动位置，不清空搜索文本
+  selectedIndex.value = 0
+  clearInlineParameterSession()
+  resetParameterSession()
+  inputContext.value = InputContext.MainSearch
+  if (resultsListRef.value?.resultsListRef) {
+    resultsListRef.value.resultsListRef.scrollTop = 0
+  }
+  
   searchBarRef.value?.focus()
 }
 
@@ -1086,6 +1101,85 @@ const blockCurrentResult = async () => {
   } catch (e) {
     console.error('Failed to block program:', e)
     ElMessage.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+const copyPath = async () => {
+  let programGuid: string
+  
+  if (isEverythingMode.value) {
+    // Everything 模式：从 EverythingPanel 获取路径
+    if (!everythingPanelRef.value) return
+    const path = everythingPanelRef.value.getSelectedPath()
+    if (!path) return
+    
+    try {
+      // 直接使用路径，不需要通过后端
+      await navigator.clipboard.writeText(path)
+      ElMessage.success(t('app.copy_path') + ' ✓')
+      resultItemMenuRef.value?.hideMenu()
+    } catch (e) {
+      console.error('Failed to copy path:', e)
+      ElMessage.error('拷贝路径失败')
+    }
+  } else {
+    // 普通模式：从搜索结果获取 GUID
+    const currentResults = is_alt_pressed.value ? latest_launch_program.value : searchResults.value
+    const selected = currentResults[selectedIndex.value]
+    if (!selected) return
+
+    programGuid = selected[0]
+
+    try {
+      // 调用后端命令复制路径到剪贴板
+      await invoke('command_copy_program_path_to_clipboard', { programGuid })
+      ElMessage.success(t('app.copy_path') + ' ✓')
+      resultItemMenuRef.value?.hideMenu()
+    } catch (e) {
+      console.error('Failed to copy path:', e)
+      ElMessage.error('拷贝路径失败')
+    }
+  }
+}
+
+const copyName = async () => {
+  let programGuid: string
+  
+  if (isEverythingMode.value) {
+    // Everything 模式：从 EverythingPanel 获取文件名
+    if (!everythingPanelRef.value) return
+    const path = everythingPanelRef.value.getSelectedPath()
+    if (!path) return
+    
+    // 从路径中提取文件名
+    const fileName = path.split('\\').pop()?.split('/').pop() || path
+    
+    try {
+      // 直接使用浏览器 API 复制文件名
+      await navigator.clipboard.writeText(fileName)
+      ElMessage.success(t('app.copy_name') + ' ✓')
+      resultItemMenuRef.value?.hideMenu()
+    } catch (e) {
+      console.error('Failed to copy name:', e)
+      ElMessage.error('拷贝名字失败')
+    }
+  } else {
+    // 普通模式：从搜索结果获取 GUID
+    const currentResults = is_alt_pressed.value ? latest_launch_program.value : searchResults.value
+    const selected = currentResults[selectedIndex.value]
+    if (!selected) return
+
+    programGuid = selected[0]
+
+    try {
+      // 调用后端命令复制名称到剪贴板
+      await invoke('command_copy_program_name_to_clipboard', { programGuid })
+      ElMessage.success(t('app.copy_name') + ' ✓')
+      resultItemMenuRef.value?.hideMenu()
+    } catch (e) {
+      console.error('Failed to copy name:', e)
+      ElMessage.error('拷贝名字失败')
+    }
   }
 }
 
@@ -1231,7 +1325,8 @@ onMounted(async () => {
     }
   }))
   unlisten.push(await listen('handle_focus_lost', () => {
-    initSearchBar()
+    // ✅ 不再清空搜索文本，保留上一次的搜索内容
+    // initSearchBar()  // 注释掉，避免清除搜索文本
     is_visible.value = false
   }))
 

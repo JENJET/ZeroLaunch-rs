@@ -102,6 +102,7 @@ export function useShortcuts(options: UseShortcutsOptions) {
     shortcutConfig,
     everythingPanelRef,
     searchText,
+    resultItemMenuRef,  // ✅ 传入右键菜单引用
   )
 
   const parameterInputHandler = createParameterInputShortcutHandler(

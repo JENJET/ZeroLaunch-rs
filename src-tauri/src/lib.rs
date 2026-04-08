@@ -229,6 +229,8 @@ pub fn run() {
             command_update_program_icon,
             command_add_forbidden_path,
             command_get_program_path,
+            command_copy_program_path_to_clipboard,
+            command_copy_program_name_to_clipboard,
             command_get_arch,
             command_download_model,
             get_everything_icon,
