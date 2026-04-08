@@ -341,16 +341,20 @@ impl ProgramManager {
         let program_registry = self.program_registry.read().await;
         let mut result: Vec<(u64, String, String)> = Vec::new();
         for match_result in match_results {
-            let index = *self
-                .program_locater
-                .get(&match_result.program_guid)
-                .expect_programming("程序定位器中未找到程序GUID");
-            let program = &program_registry[index];
-            result.push((
-                program.program_guid,
-                program.show_name.clone(),
-                program.launch_method.get_text(),
-            ));
+            // ✅ 优雅处理：如果 GUID 不存在，跳过该结果
+            if let Some(index) = self.program_locater.get(&match_result.program_guid) {
+                let program = &program_registry[*index];
+                result.push((
+                    program.program_guid,
+                    program.show_name.clone(),
+                    program.launch_method.get_text(),
+                ));
+            } else {
+                warn!(
+                    "搜索结果中的GUID不存在: {}，可能已被刷新移除",
+                    match_result.program_guid
+                );
+            }
         }
         result
     }
@@ -433,22 +437,64 @@ impl ProgramManager {
     }
     /// 获取程序的图标，返回使用base64编码的png图片
     pub async fn get_icon(&self, program_guid: &u64) -> Vec<u8> {
-        let index = *self
-            .program_locater
-            .get(program_guid)
-            .expect_programming(&format!("程序定位器中未找到程序GUID:{}", program_guid));
-        let program_registry = self.program_registry.read().await;
-        let target_program = &program_registry[index];
+        // ✅ 优雅处理：如果 GUID 不存在，返回空图标而不是 Panic
+        let index = match self.program_locater.get(program_guid) {
+            Some(idx) => *idx,
+            None => {
+                warn!(
+                    "程序定位器中未找到程序GUID: {}，可能已被刷新移除",
+                    program_guid
+                );
+                return vec![]; // 返回空图标
+            }
+        };
 
-        self.icon_manager
-            .get_icon(target_program.icon_request.clone())
-            .await
+        // ✅ 先获取 icon_request，然后立即释放锁
+        let icon_request = {
+            let program_registry = self.program_registry.read().await;
+
+            // ✅ 检查索引是否有效
+            if index >= program_registry.len() {
+                warn!("程序索引超出范围: {} >= {}", index, program_registry.len());
+                return vec![];
+            }
+
+            program_registry[index].icon_request.clone()
+        };
+
+        // ✅ 在无锁状态下加载图标
+        self.icon_manager.get_icon(icon_request).await
+    }
+
+    /// 通过数组索引获取程序的图标（用于预加载所有图标）
+    pub async fn get_icon_by_index(&self, index: usize) -> Option<Vec<u8>> {
+        // ✅ 先获取 icon_request，然后立即释放锁
+        let icon_request = {
+            let program_registry = self.program_registry.read().await;
+
+            if index >= program_registry.len() {
+                warn!("图标索引超出范围: {} >= {}", index, program_registry.len());
+                return None;
+            }
+
+            program_registry[index].icon_request.clone()
+        };
+
+        // ✅ 在无锁状态下加载图标
+        Some(self.icon_manager.get_icon(icon_request).await)
     }
     /// 获得已保存的程序的个数
     pub async fn get_program_count(&self) -> usize {
         let program_registry = self.program_registry.read().await;
         program_registry.len()
     }
+
+    /// 获取所有程序的 GUID 列表（按索引顺序）
+    pub async fn get_program_guid_list(&self) -> Vec<u64> {
+        let program_registry = self.program_registry.read().await;
+        program_registry.iter().map(|p| p.program_guid).collect()
+    }
+
     /// 获得程序是否是 URL 的列表
     pub async fn get_program_is_url_list(&self) -> Vec<bool> {
         let program_registry = self.program_registry.read().await;

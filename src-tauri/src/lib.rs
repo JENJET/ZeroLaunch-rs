@@ -175,7 +175,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             command_save_remote_config,
             load_program_icon,
+            load_program_icon_by_index,
             get_program_count,
+            get_program_guid_list,
             command_get_program_url_status,
             launch_program,
             get_program_info,
@@ -622,6 +624,7 @@ async fn reload_program_catalog(state: &AppState, runtime_config: &RuntimeConfig
     #[cfg(target_arch = "x86_64")]
     let everything_manager = state.get_everything_manager();
     let storage_manager = state.get_storage_manager();
+
     let semantic_store_str = load_or_initialize_semantic_store(storage_manager.as_ref()).await;
 
     // 更新 IconManager 配置
@@ -651,10 +654,20 @@ async fn reload_program_catalog(state: &AppState, runtime_config: &RuntimeConfig
 /// 更新程序的状态
 async fn update_app_setting() {
     let state = ServiceLocator::get_state();
-    // 如果当前可见，则忽略更新
-    if state.get_search_bar_visible() {
+
+    // ✅ 如果已经在刷新中，忽略新的请求
+    if state.get_refresh_scheduler().is_refreshing() {
+        tracing::debug!("Refresh already in progress, ignoring duplicate request");
         return;
     }
+
+    // ✅ 设置刷新中状态
+    state.get_refresh_scheduler().set_refreshing(true);
+
+    // ✅ 移除窗口可见性检查 - 刷新不应受窗口状态限制
+    // if state.get_search_bar_visible() {
+    //     return;
+    // }
 
     // 获取主窗口句柄用于发送事件
     let handle = state.get_main_handle();
@@ -674,8 +687,23 @@ async fn update_app_setting() {
     // 2. 切换语言并刷新托盘
     apply_language_and_tray(app_config.as_ref());
 
-    // 3. 重新更新程序索引的路径
-    reload_program_catalog(state.as_ref(), runtime_config.as_ref()).await;
+    // 3. ✅ 在后台线程中重新加载程序目录（非阻塞）
+    let state_clone = state.clone();
+    let runtime_config_clone = runtime_config.clone();
+    tauri::async_runtime::spawn(async move {
+        reload_program_catalog(state_clone.as_ref(), runtime_config_clone.as_ref()).await;
+
+        // 刷新完成后通知前端
+        if let Err(e) = state_clone
+            .get_main_handle()
+            .emit("refresh_program_done", "")
+        {
+            tracing::debug!("emit refresh_program_done failed: {:?}", e);
+        }
+
+        // ✅ 清除刷新中状态
+        state_clone.get_refresh_scheduler().set_refreshing(false);
+    });
 
     // 4. 判断要不要开机自启动
     if let Err(e) = handle_auto_start() {
@@ -700,11 +728,6 @@ async fn update_app_setting() {
     state
         .get_refresh_scheduler()
         .update_config(refresh_scheduler_config.to_partial());
-
-    // 发送刷新结束事件
-    if let Err(e) = handle.emit("refresh_program_end", "") {
-        tracing::debug!("emit refresh_program_end failed: {:?}", e);
-    }
 
     // 发送窗口更新事件
     if let Err(e) = handle.emit("update_search_bar_window", "") {

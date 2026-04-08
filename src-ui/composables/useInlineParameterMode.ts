@@ -1,7 +1,7 @@
 import { computed, ref, Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
-export type SearchResultTuple = [number, string, string]
+export type SearchResultTuple = [string, string, string]  // GUID改为字符串
 
 type LaunchMethodKind = 'Path' | 'PackageFamilyName' | 'File' | 'Url' | 'Command'
 
@@ -20,7 +20,7 @@ interface LaunchTemplateInfoResponse {
 }
 
 interface InlineParameterSession {
-  programGuid: number
+  programGuid: string  // GUID改为字符串
   info: LaunchTemplateInfo
   lockedPrefix: string
 }

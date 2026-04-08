@@ -6,11 +6,11 @@ use crate::modules::icon_manager::config::{IconManagerConfig, RuntimeIconManager
 use bincode::Encode;
 use dashmap::DashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tauri::async_runtime::RwLock;
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{info, warn};
 pub mod config;
 use serde::{Deserialize, Serialize};
 
@@ -56,9 +56,9 @@ struct IconManagerInner {
     /// 正在处理的请求 (hash -> 请求信息)
     pending_requests: Arc<Mutex<DashMap<String, PendingRequest>>>,
     /// 要不要开启图片缓存
-    enable_icon_cache: bool,
+    enable_icon_cache: AtomicBool,
     /// 要不要联网来获取网址的图标
-    enable_online: bool,
+    enable_online: AtomicBool,
     /// 缓存刷新间隔（秒）
     cache_refresh_interval_secs: u64,
 }
@@ -68,11 +68,11 @@ impl IconManagerInner {
         let mut inner = Self {
             default_app_icon_path: runtime_config.default_app_icon_path,
             default_web_icon_path: runtime_config.default_web_icon_path,
-            enable_icon_cache: true,
-            enable_online: true,
+            enable_icon_cache: AtomicBool::new(true),
+            enable_online: AtomicBool::new(true),
             cached_icons: DashMap::new(),
             pending_requests: Arc::new(Mutex::new(DashMap::new())),
-            cache_refresh_interval_secs: 60, // 默认1分钟
+            cache_refresh_interval_secs: 600, // 默认10分钟
         };
         inner.init();
         inner
@@ -82,23 +82,30 @@ impl IconManagerInner {
         self.cached_icons = self.scan_cached_icons();
     }
 
-    pub fn load_from_config(&mut self, config: Arc<IconManagerConfig>) {
-        self.enable_icon_cache = config.get_enable_icon_cache();
-        self.enable_online = config.get_enable_online();
+    pub fn load_from_config(&self, config: Arc<IconManagerConfig>) {
+        self.enable_icon_cache
+            .store(config.get_enable_icon_cache(), Ordering::SeqCst);
+        self.enable_online
+            .store(config.get_enable_online(), Ordering::SeqCst);
 
-        if self.enable_icon_cache && self.cached_icons.is_empty() {
-            self.cached_icons = self.scan_cached_icons();
+        // ✅ 如果启用缓存且缓存为空，在后台异步扫描（不阻塞）
+        if self.enable_icon_cache.load(Ordering::SeqCst) && self.cached_icons.is_empty() {
+            let cached_icons_clone = self.cached_icons.clone();
+            tokio::task::spawn(async move {
+                Self::scan_cached_icons_async(cached_icons_clone).await;
+            });
         }
     }
 
     pub async fn get_icon(&self, request: IconRequest) -> Vec<u8> {
         let hash_name = request.get_hash_string() + ".png";
 
-        // 1. 检查是否有缓存
-        let has_cache = self.enable_icon_cache && self.cached_icons.contains_key(&hash_name);
+        // 1. 检查是否有缓存（先查内存索引）
+        let has_cache_in_memory = self.enable_icon_cache.load(Ordering::SeqCst)
+            && self.cached_icons.contains_key(&hash_name);
 
-        if has_cache {
-            // 1.1 有缓存，立即返回旧缓存（保证快速显示）
+        if has_cache_in_memory {
+            // 1.1 内存索引命中，从磁盘加载缓存
             let cached_data = self.load_from_cache(&hash_name).await;
 
             // 1.2 检查是否需要后台刷新
@@ -110,6 +117,32 @@ impl IconManagerInner {
             }
 
             return cached_data;
+        }
+
+        // 1.3 内存索引未命中，但启用缓存时尝试从磁盘直接读取（容错处理）
+        if self.enable_icon_cache.load(Ordering::SeqCst) {
+            if let Some(disk_data) = self.try_load_from_disk(&hash_name).await {
+                info!(
+                    "Cache file found on disk but not in memory index: {}",
+                    hash_name
+                );
+
+                // 更新内存索引，避免下次重复读磁盘
+                self.cached_icons.insert(
+                    hash_name.clone(),
+                    IconCacheEntry {
+                        last_updated: Instant::now(),
+                    },
+                );
+
+                // 检查是否需要后台刷新
+                let should_refresh = self.should_refresh_cache(&hash_name);
+                if should_refresh {
+                    self.spawn_background_refresh(request.clone(), hash_name.clone());
+                }
+
+                return disk_data;
+            }
         }
 
         // 2. 没有缓存，检查是否已有正在进行的相同请求
@@ -157,7 +190,7 @@ impl IconManagerInner {
         }
 
         // 6. 写入缓存
-        if self.enable_icon_cache && !is_default && !icon_data.is_empty() {
+        if self.enable_icon_cache.load(Ordering::SeqCst) && !is_default && !icon_data.is_empty() {
             self.save_to_cache(&hash_name, icon_data.clone()).await;
         }
 
@@ -178,7 +211,7 @@ impl IconManagerInner {
     }
 
     async fn handle_url_request(&self, url: String) -> (Vec<u8>, bool) {
-        if !self.enable_online {
+        if !self.enable_online.load(Ordering::SeqCst) {
             let default_data = ImageProcessor::load_image(&ImageIdentity::File(
                 self.default_web_icon_path.clone(),
             ))
@@ -222,6 +255,35 @@ impl IconManagerInner {
                 .to_string(),
         );
         ImageProcessor::load_image(&identity).await
+    }
+
+    /// 尝试从磁盘直接加载缓存（不依赖内存索引）
+    /// 用于容错处理：当磁盘有缓存文件但内存索引缺失时
+    async fn try_load_from_disk(&self, hash_name: &str) -> Option<Vec<u8>> {
+        let cached_icon_dir = ICON_CACHE_DIR.clone();
+        let icon_path = Path::new(&cached_icon_dir).join(hash_name);
+
+        // 检查文件是否存在
+        if !icon_path.exists() {
+            return None;
+        }
+
+        // 尝试读取文件
+        let identity = ImageIdentity::File(
+            icon_path
+                .to_str()
+                .expect_programming("缓存路径转换为字符串失败")
+                .to_string(),
+        );
+
+        let data = ImageProcessor::load_image(&identity).await;
+
+        // 如果读取成功且非空，返回数据
+        if !data.is_empty() {
+            Some(data)
+        } else {
+            None
+        }
     }
 
     /// 保存图标到缓存（使用临时文件+原子重命名）
@@ -342,7 +404,7 @@ impl IconManagerInner {
 
     fn scan_cached_icons(&self) -> DashMap<String, IconCacheEntry> {
         let result = DashMap::new();
-        if !self.enable_icon_cache {
+        if !self.enable_icon_cache.load(Ordering::SeqCst) {
             return result;
         }
 
@@ -366,6 +428,46 @@ impl IconManagerInner {
             Err(e) => warn!("Error reading icon cache directory: {}", e),
         }
         result
+    }
+
+    /// ✅ 异步版本：在后台线程中扫描缓存目录（不阻塞主流程）
+    async fn scan_cached_icons_async(cached_icons: DashMap<String, IconCacheEntry>) {
+        info!("🔍 [图标缓存] 开始异步扫描缓存目录...");
+        let start_time = std::time::Instant::now();
+
+        let icon_cache_dir = ICON_CACHE_DIR.clone();
+
+        // 使用 spawn_blocking 避免阻塞 async runtime
+        let entries = tokio::task::spawn_blocking(move || read_dir_or_create(icon_cache_dir))
+            .await
+            .ok()
+            .and_then(|r| r.ok());
+
+        if let Some(entries) = entries {
+            let mut count = 0;
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy().into_owned();
+
+                if file_name_str.ends_with(".png") {
+                    cached_icons.insert(
+                        file_name_str,
+                        IconCacheEntry {
+                            last_updated: Instant::now(),
+                        },
+                    );
+                    count += 1;
+                }
+            }
+
+            let elapsed = start_time.elapsed();
+            info!(
+                "✅ [图标缓存] 扫描完成！共 {} 个缓存文件，耗时: {:?}",
+                count, elapsed
+            );
+        } else {
+            warn!("❌ [图标缓存] 无法读取缓存目录");
+        }
     }
 
     pub async fn get_everything_icon(&self, path: String) -> Vec<u8> {
@@ -423,24 +525,22 @@ impl IconManagerInner {
 
 #[derive(Debug)]
 pub struct IconManager {
-    inner: RwLock<IconManagerInner>,
+    inner: Arc<IconManagerInner>,
 }
 
 impl IconManager {
     pub fn new(config: RuntimeIconManagerConfig) -> Self {
         Self {
-            inner: RwLock::new(IconManagerInner::new(config)),
+            inner: Arc::new(IconManagerInner::new(config)),
         }
     }
 
     pub async fn load_from_config(&self, config: Arc<IconManagerConfig>) {
-        let mut inner = self.inner.write().await;
-        inner.load_from_config(config);
+        self.inner.load_from_config(config);
     }
 
     pub async fn get_icon(&self, request: IconRequest) -> Vec<u8> {
-        let inner = self.inner.read().await;
-        inner.get_icon(request).await
+        self.inner.get_icon(request).await
     }
 
     pub async fn update_program_icon_cache(
@@ -448,8 +548,7 @@ impl IconManager {
         icon_request: IconRequest,
         new_icon_source: &str,
     ) -> Result<(), String> {
-        let inner = self.inner.read().await;
-        if !inner.enable_icon_cache {
+        if !self.inner.enable_icon_cache.load(Ordering::SeqCst) {
             return Err("Icon cache is disabled".to_string());
         }
 
@@ -486,7 +585,6 @@ impl IconManager {
     }
 
     pub async fn get_everything_icon(&self, path: String) -> Vec<u8> {
-        let inner = self.inner.read().await;
-        inner.get_everything_icon(path).await
+        self.inner.get_everything_icon(path).await
     }
 }

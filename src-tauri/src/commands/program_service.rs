@@ -28,7 +28,7 @@ pub struct ProgramInfo {
 /// 更新搜索窗口
 
 #[derive(Serialize, Debug)]
-pub struct SearchResult(u64, String, String);
+pub struct SearchResult(String, String, String); // GUID改为字符串，避免JS number精度丢失
 
 #[derive(Serialize, Debug)]
 pub struct LaunchTemplateInfo {
@@ -216,15 +216,41 @@ pub async fn load_program_icon<R: Runtime>(
     _app: tauri::AppHandle<R>,
     _window: tauri::Window<R>,
     state: tauri::State<'_, Arc<AppState>>,
-    program_guid: u64,
+    program_guid: String, // 接收字符串，避免JS精度丢失
 ) -> Result<Vec<u8>, String> {
+    // 将字符串转换为 u64
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
     let program_manager = state.get_program_manager();
-    let result = program_manager.get_icon(&program_guid).await;
+    let result = program_manager.get_icon(&guid).await;
     if result.is_empty() {
         warn!("id： {}， 获得图标失败！", program_guid);
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+/// 通过数组索引加载程序图标（用于预加载所有图标）
+pub async fn load_program_icon_by_index<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    _window: tauri::Window<R>,
+    state: tauri::State<'_, Arc<AppState>>,
+    index: usize,
+) -> Result<Vec<u8>, String> {
+    let program_manager = state.get_program_manager();
+
+    match program_manager.get_icon_by_index(index).await {
+        Some(icon_data) => {
+            if icon_data.is_empty() {
+                warn!("索引 {} 的图标为空", index);
+            }
+            Ok(icon_data)
+        }
+        None => Err(format!("图标索引超出范围: {}", index)),
+    }
 }
 
 #[tauri::command]
@@ -236,6 +262,19 @@ pub async fn get_program_count<R: Runtime>(
     let program_manager = state.get_program_manager();
     let result = program_manager.get_program_count().await;
     Ok(result)
+}
+
+#[tauri::command]
+/// 获取所有程序的 GUID 列表（按索引顺序）
+pub async fn get_program_guid_list<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    _window: tauri::Window<R>,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, String> {
+    let program_manager = state.get_program_manager();
+    let guids = program_manager.get_program_guid_list().await;
+    // 转换为字符串，避免 JS 精度丢失
+    Ok(guids.iter().map(|g| g.to_string()).collect())
 }
 
 #[tauri::command]
@@ -258,13 +297,18 @@ pub async fn command_get_program_url_status<R: Runtime>(
 /// - `args`: 用户参数数组,无参数时传递空数组 []
 pub async fn launch_program(
     state: tauri::State<'_, Arc<AppState>>,
-    program_guid: u64,
+    program_guid: String, // 接收字符串，避免JS精度丢失
     ctrl: bool,
     shift: bool,
     args: Vec<String>,
     query_text: String,
 ) -> Result<(), String> {
     use crate::modules::parameter_resolver::SystemParameterSnapshot;
+
+    // 将字符串转换为 u64
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
 
     // 总是捕获系统参数快照(性能影响可忽略,约 0.1ms)
     let snapshot = SystemParameterSnapshot::capture();
@@ -273,19 +317,11 @@ pub async fn launch_program(
 
     // 使用传入的用户参数数组(可能为空),同时解析系统参数
     let override_method = program_manager
-        .build_launch_method_with_args(program_guid, &args, &snapshot)
+        .build_launch_method_with_args(guid, &args, &snapshot)
         .await
         .map_err(|e| format!("Failed to build launch method: {}", e))?;
 
-    launch_program_internal(
-        state,
-        program_guid,
-        ctrl,
-        shift,
-        query_text,
-        Some(override_method),
-    )
-    .await
+    launch_program_internal(state, guid, ctrl, shift, query_text, Some(override_method)).await
 }
 
 #[tauri::command]
@@ -294,11 +330,16 @@ pub async fn get_launch_template_info<R: Runtime>(
     _app: tauri::AppHandle<R>,
     _window: tauri::Window<R>,
     state: tauri::State<'_, Arc<AppState>>,
-    program_guid: u64,
+    program_guid: String, // 接收字符串，避免JS精度丢失
 ) -> Result<LaunchTemplateInfo, String> {
+    // 将字符串转换为 u64
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
     let program_manager = state.get_program_manager();
     let (template, kind, placeholder_count, show_name) = program_manager
-        .get_launch_template_info(program_guid)
+        .get_launch_template_info(guid)
         .await
         .ok_or_else(|| format!("Program GUID {} not found", program_guid))?;
 
@@ -366,7 +407,7 @@ pub async fn handle_search_text<R: Runtime>(
 
     let mut ret = Vec::new();
     for item in results {
-        ret.push(SearchResult(item.0, item.1, item.2));
+        ret.push(SearchResult(item.0.to_string(), item.1, item.2));
     }
 
     if search_text.trim().is_empty() {
@@ -418,7 +459,7 @@ pub async fn handle_everything_search<R: Runtime>(
 
     Ok(results
         .into_iter()
-        .map(|r| SearchResult(r.id, r.path.clone(), r.path))
+        .map(|r| SearchResult(r.id.to_string(), r.path.clone(), r.path))
         .collect())
 }
 
@@ -549,7 +590,7 @@ pub async fn command_get_latest_launch_program(
         .await;
     let mut ret = Vec::new();
     for item in results {
-        ret.push(SearchResult(item.0, item.1, item.2));
+        ret.push(SearchResult(item.0.to_string(), item.1, item.2));
     }
     debug!("latest_launch_propgram: {:?}", ret);
     Ok(ret)
@@ -586,13 +627,17 @@ pub async fn open_target_folder<R: Runtime>(
     _app: tauri::AppHandle<R>,
     _window: tauri::Window<R>,
     state: tauri::State<'_, Arc<AppState>>,
-    program_guid: u64,
+    program_guid: String,
 ) -> Result<bool, String> {
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
     let program_manager = state.get_program_manager();
     if let Err(e) = hide_window() {
         return Err(format!("Failed to hide window: {:?}", e));
     }
-    let result = program_manager.open_target_folder(program_guid).await;
+    let result = program_manager.open_target_folder(guid).await;
     if !result {
         notify("ZeroLaunch-rs", "打开文件夹失败，目标类型不支持");
         return Ok(false);
@@ -766,12 +811,16 @@ pub async fn command_add_forbidden_path(path: String) -> Result<(), String> {
 
 /// 获取程序的路径（用于屏蔽功能）
 #[tauri::command]
-pub async fn command_get_program_path(program_guid: u64) -> Result<String, String> {
+pub async fn command_get_program_path(program_guid: String) -> Result<String, String> {
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
     let state = ServiceLocator::get_state();
     let program_manager = state.get_program_manager();
 
     let program = program_manager
-        .get_program_by_guid(program_guid)
+        .get_program_by_guid(guid)
         .await
         .ok_or_else(|| "Program not found".to_string())?;
 

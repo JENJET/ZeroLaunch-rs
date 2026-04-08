@@ -111,171 +111,6 @@ impl ImageProcessor {
     }
 
     /// 内部函数：获取网站的主图标
-    async fn fetch_favicon_primary(client: &reqwest::Client, url: &str) -> AppResult<Vec<u8>> {
-        let response = client.get(url).send().await.map_err(|e| {
-            AppError::network_error_with_source(
-                format!("Failed to fetch website: {}", url),
-                Box::new(e),
-            )
-        })?;
-
-        // 如果返回的是图片，直接使用
-        if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-            if ct.to_str().unwrap_or("").starts_with("image/") {
-                return Ok(response
-                    .bytes()
-                    .await
-                    .map_err(|e| {
-                        AppError::network_error_with_source(
-                            "Failed to read image bytes".to_string(),
-                            Box::new(e),
-                        )
-                    })?
-                    .to_vec());
-            }
-        }
-
-        let html_content = response.text().await.map_err(|e| {
-            AppError::network_error_with_source(
-                "Failed to read response text".to_string(),
-                Box::new(e),
-            )
-        })?;
-
-        // 将 HTML 解析和图标 URL 提取放在一个同步代码块中
-        let icon_url = {
-            let document = Html::parse_document(&html_content);
-            let base_url = Url::parse(url).map_err(|e| AppError::NetworkError {
-                message: format!("Invalid URL format: {}", e),
-                source: None,
-            })?;
-
-            // 定义要搜索的图标类型(按优先级排序)
-            // 优先查找 apple-touch-icon，因为它们通常质量更高
-            let icon_selectors = [
-                r#"link[rel="apple-touch-icon"]"#,
-                r#"link[rel="apple-touch-icon-precomposed"]"#,
-                r#"link[rel="icon"]"#,
-                r#"link[rel="shortcut icon"]"#,
-            ];
-
-            #[derive(Debug)]
-            struct IconCandidate {
-                url: String,
-                size: u32,    // 使用单个数字表示尺寸(取宽高中的较大值)
-                priority: u8, // 优先级：数值越大优先级越高
-            }
-
-            let mut candidates = Vec::new();
-
-            // 遍历所有选择器,收集候选图标
-            for (index, selector_str) in icon_selectors.iter().enumerate() {
-                // 计算优先级：apple-touch-icon (index 0, 1) 优先级高
-                // 列表前面的优先级高，这里用反向索引作为基础优先级
-                let base_priority = (icon_selectors.len() - index) as u8;
-
-                let selector =
-                    Selector::parse(selector_str).map_err(|e| AppError::ImageProcessingError {
-                        message: format!("Failed to parse CSS selector: {}", e),
-                    })?;
-
-                for element in document.select(&selector) {
-                    if let Some(href) = element.value().attr("href") {
-                        if let Ok(icon_url) = base_url.join(href) {
-                            // 解析尺寸信息
-                            let size = if let Some(sizes_attr) = element.value().attr("sizes") {
-                                Self::parse_icon_size(sizes_attr)
-                            } else {
-                                // apple-touch-icon 默认为 180 (如果未指定)
-                                if selector_str.contains("apple-touch-icon") {
-                                    180
-                                } else {
-                                    32
-                                }
-                            };
-
-                            candidates.push(IconCandidate {
-                                url: icon_url.to_string(),
-                                size,
-                                priority: base_priority,
-                            });
-
-                            debug!(
-                                "Found icon candidate: {} (size: {}x{}, priority: {})",
-                                icon_url, size, size, base_priority
-                            );
-                        }
-                    }
-                }
-            }
-
-            // 选择最佳图标：先看优先级，再看尺寸
-            // 我们希望优先选 apple-touch-icon，但在同类中选最大的
-            let favicon_url = if let Some(best_candidate) = candidates.iter().max_by(|a, b| match a
-                .priority
-                .cmp(&b.priority)
-            {
-                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
-                other => other,
-            }) {
-                info!(
-                    "Selected best icon: {} (size: {}x{})",
-                    best_candidate.url, best_candidate.size, best_candidate.size
-                );
-                best_candidate.url.clone()
-            } else {
-                // 如果没有找到任何图标,回退到默认的 /favicon.ico
-                let default_url = base_url.join("/favicon.ico").expect_programming(
-                    "Failed to create default favicon URL - this should never happen",
-                );
-                info!("No icon found in HTML, falling back to: {}", default_url);
-                default_url.to_string()
-            };
-
-            favicon_url
-        };
-
-        info!("Downloading favicon from: {}", icon_url);
-
-        // 处理 Data URI
-        if icon_url.starts_with("data:") {
-            if let Some(comma_pos) = icon_url.find(',') {
-                let meta = &icon_url[5..comma_pos];
-                let data = &icon_url[comma_pos + 1..];
-
-                if meta.ends_with(";base64") {
-                    let decoded = BASE64_STANDARD.decode(data).map_err(|e| {
-                        AppError::ImageProcessingError {
-                            message: format!("Failed to decode base64 data URI: {}", e),
-                        }
-                    })?;
-                    return Ok(decoded);
-                } else {
-                    // 简单的 URL decode 尝试，如果不是 base64
-                    // 这里假设是 ASCII 或者是 UTF-8 编码的 SVG
-                    return Ok(data.as_bytes().to_vec());
-                }
-            }
-        }
-
-        // 下载图标
-        let icon_response = client.get(&icon_url).send().await.map_err(|e| {
-            AppError::network_error_with_source(
-                format!("Failed to fetch favicon from: {}", icon_url),
-                Box::new(e),
-            )
-        })?;
-
-        let icon_data = icon_response.bytes().await.map_err(|e| {
-            AppError::network_error_with_source(
-                "Failed to read favicon bytes".to_string(),
-                Box::new(e),
-            )
-        })?;
-
-        Ok(icon_data.to_vec())
-    }
-
     /// 获取网站的 PNG 格式图标(favicon)
     async fn fetch_website_favicon_data(url: &str) -> AppResult<Vec<u8>> {
         if !Self::is_network_available() {
@@ -286,8 +121,18 @@ impl ImageProcessor {
             });
         }
 
+        let url_owned = url.to_string();
+
+        // ✅ 使用 spawn_blocking 将网络请求移到专用线程池，避免阻塞 async runtime
+        tokio::task::spawn_blocking(move || Self::fetch_favicon_sync(&url_owned))
+            .await
+            .map_err(|e| AppError::programming_error(format!("Task panicked: {}", e)))?
+    }
+
+    /// 同步版本的 Favicon 下载（在 blocking 线程中执行）
+    fn fetch_favicon_sync(url: &str) -> AppResult<Vec<u8>> {
         // 构建带有 User-Agent 的 Client，增加超时处理
-        let client = reqwest::Client::builder()
+        let client = reqwest::blocking::Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -339,10 +184,10 @@ impl ImageProcessor {
                 candidate_url
             );
 
-            match Self::fetch_favicon_primary(&client, candidate_url).await {
+            match Self::fetch_favicon_primary_sync(&client, candidate_url) {
                 Ok(data) => {
                     // 验证图片有效性
-                    match Self::convert_image_to_png(data).await {
+                    match Self::convert_image_to_png_sync(data) {
                         Ok(png_data) => {
                             if index > 0 {
                                 info!(
@@ -814,16 +659,16 @@ impl ImageProcessor {
                     // 提前返回 None 如果无法获取图标
                     if result == 0 {
                         let last_error = unsafe { GetLastError() };
-                        warn!(
-                            "SHGetFileInfoW failed for: {}, error: {:?}",
+                        debug!(
+                            "SHGetFileInfoW failed for: {}, error: {:?} (expected for system/special files)",
                             file_path, last_error
                         );
                         return None;
                     }
 
                     if sh_file_info.hIcon.is_invalid() {
-                        warn!(
-                            "Invalid icon handle for: {} (attempt {})",
+                        debug!(
+                            "Invalid icon handle for: {} (attempt {}) - skipping",
                             file_path,
                             attempt + 1
                         );
@@ -1424,5 +1269,168 @@ impl ImageProcessor {
         .map_err(|e| {
             AppError::programming_error(format!("Task join error in color analysis: {}", e))
         })?
+    }
+
+    /// 同步版本的 fetch_favicon_primary（用于 blocking 线程）
+    fn fetch_favicon_primary_sync(
+        client: &reqwest::blocking::Client,
+        url: &str,
+    ) -> AppResult<Vec<u8>> {
+        let response = client.get(url).send().map_err(|e| {
+            AppError::network_error_with_source(
+                format!("Failed to fetch website: {}", url),
+                Box::new(e),
+            )
+        })?;
+
+        // 如果返回的是图片，直接使用
+        if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            if ct.to_str().unwrap_or("").starts_with("image/") {
+                return Ok(response
+                    .bytes()
+                    .map_err(|e| {
+                        AppError::network_error_with_source(
+                            "Failed to read image bytes".to_string(),
+                            Box::new(e),
+                        )
+                    })?
+                    .to_vec());
+            }
+        }
+
+        let html_content = response.text().map_err(|e| {
+            AppError::network_error_with_source(
+                "Failed to read response text".to_string(),
+                Box::new(e),
+            )
+        })?;
+
+        // 将 HTML 解析和图标 URL 提取放在一个同步代码块中
+        let icon_url = {
+            let document = Html::parse_document(&html_content);
+            let base_url = Url::parse(url).map_err(|e| AppError::NetworkError {
+                message: format!("Invalid URL format: {}", e),
+                source: None,
+            })?;
+
+            // 定义要搜索的图标类型(按优先级排序)
+            let icon_selectors = [
+                r#"link[rel="apple-touch-icon"]"#,
+                r#"link[rel="apple-touch-icon-precomposed"]"#,
+                r#"link[rel="icon"]"#,
+                r#"link[rel="shortcut icon"]"#,
+            ];
+
+            #[derive(Debug)]
+            struct IconCandidate {
+                url: String,
+                size: u32,
+                priority: u8,
+            }
+
+            let mut candidates = Vec::new();
+
+            for (index, selector_str) in icon_selectors.iter().enumerate() {
+                let base_priority = (icon_selectors.len() - index) as u8;
+
+                let selector =
+                    Selector::parse(selector_str).map_err(|e| AppError::ImageProcessingError {
+                        message: format!("Failed to parse CSS selector: {}", e),
+                    })?;
+
+                for element in document.select(&selector) {
+                    if let Some(href) = element.value().attr("href") {
+                        if let Ok(icon_url) = base_url.join(href) {
+                            let size = if let Some(sizes_attr) = element.value().attr("sizes") {
+                                Self::parse_icon_size(sizes_attr)
+                            } else {
+                                if selector_str.contains("apple-touch-icon") {
+                                    180
+                                } else {
+                                    32
+                                }
+                            };
+
+                            candidates.push(IconCandidate {
+                                url: icon_url.to_string(),
+                                size,
+                                priority: base_priority,
+                            });
+                        }
+                    }
+                }
+            }
+
+            let favicon_url = if let Some(best_candidate) = candidates.iter().max_by(|a, b| match a
+                .priority
+                .cmp(&b.priority)
+            {
+                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
+                other => other,
+            }) {
+                best_candidate.url.clone()
+            } else {
+                let default_url = base_url
+                    .join("/favicon.ico")
+                    .expect_programming("Failed to create default favicon URL");
+                default_url.to_string()
+            };
+
+            favicon_url
+        };
+
+        // 处理 Data URI
+        if icon_url.starts_with("data:") {
+            if let Some(comma_pos) = icon_url.find(',') {
+                let meta = &icon_url[5..comma_pos];
+                let data = &icon_url[comma_pos + 1..];
+
+                if meta.ends_with(";base64") {
+                    let decoded = BASE64_STANDARD.decode(data).map_err(|e| {
+                        AppError::ImageProcessingError {
+                            message: format!("Failed to decode base64 data URI: {}", e),
+                        }
+                    })?;
+                    return Ok(decoded);
+                } else {
+                    return Ok(data.as_bytes().to_vec());
+                }
+            }
+        }
+
+        // 下载图标
+        let icon_response = client.get(&icon_url).send().map_err(|e| {
+            AppError::network_error_with_source(
+                format!("Failed to fetch favicon from: {}", icon_url),
+                Box::new(e),
+            )
+        })?;
+
+        let icon_data = icon_response.bytes().map_err(|e| {
+            AppError::network_error_with_source(
+                "Failed to read favicon bytes".to_string(),
+                Box::new(e),
+            )
+        })?;
+
+        Ok(icon_data.to_vec())
+    }
+
+    /// 同步版本的 convert_image_to_png（用于 blocking 线程）
+    fn convert_image_to_png_sync(image_data: Vec<u8>) -> AppResult<Vec<u8>> {
+        use std::io::Cursor;
+
+        let img =
+            image::load_from_memory(&image_data).map_err(|e| AppError::ImageProcessingError {
+                message: format!("Failed to load image from memory: {}", e),
+            })?;
+
+        let mut png_data = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png_data), ImageFormat::Png)
+            .map_err(|e| AppError::ImageProcessingError {
+                message: format!("Failed to convert image to PNG: {}", e),
+            })?;
+
+        Ok(png_data)
     }
 }

@@ -58,6 +58,8 @@ pub struct RefreshScheduler {
     reset_timer: Arc<AtomicBool>,
     /// 刷新回调函数（用于配置更新时重新启动）
     refresh_callback: Callback,
+    /// ✅ 标记是否正在刷新中（防止重复触发）
+    is_refreshing: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for RefreshScheduler {
@@ -81,6 +83,7 @@ impl RefreshScheduler {
             trigger_event: Arc::new((Mutex::new(false), Condvar::new())),
             reset_timer: Arc::new(AtomicBool::new(false)),
             refresh_callback: Mutex::new(None),
+            is_refreshing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -286,6 +289,16 @@ impl RefreshScheduler {
     /// 检查调度器是否正在运行
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::SeqCst)
+    }
+
+    /// ✅ 设置刷新中状态
+    pub fn set_refreshing(&self, refreshing: bool) {
+        self.is_refreshing.store(refreshing, Ordering::SeqCst);
+    }
+
+    /// ✅ 检查是否正在刷新
+    pub fn is_refreshing(&self) -> bool {
+        self.is_refreshing.load(Ordering::SeqCst)
     }
 }
 

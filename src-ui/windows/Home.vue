@@ -155,14 +155,14 @@ const selectedIndex = ref<number>(0)
 const searchBarRef = ref<InstanceType<typeof SearchBar> | null>(null)
 const resultsListRef = ref<InstanceType<typeof ResultList> | null>(null)
 const everythingPanelRef = ref<InstanceType<typeof EverythingPanel> | null>(null)
-const searchResults = ref<Array<[number, string, string]>>([])
-const latest_launch_program = ref<Array<[number, string, string]>>([])
+const searchResults = ref<Array<[string, string, string]>>([])
+const latest_launch_program = ref<Array<[string, string, string]>>([])
 const is_alt_pressed = ref<boolean>(false)
 const right_tips = ref<string>(getSearchModelLabel(current_search_model.value))
 const status_reason_code = ref<string>('none')
 const menuItems = ref<Array<{ name: string; command: string }>>([])
 const menuIcons = ref<Array<string>>([])
-const program_icons = ref<Map<number, string>>(new Map<number, string>([]))
+const program_icons = ref<Map<string, string>>(new Map<string, string>([]))
 const is_visible = ref<boolean>(false)
 const background_picture = ref('')
 const is_loading_icons = ref<boolean>(false)
@@ -170,6 +170,8 @@ const is_refreshing_dataset = ref<boolean>(false)
 const is_dark = ref(false)
 const windowSize = ref<{ width: number; height: number; }>({ width: 800, height: 800 })
 const scaleFactor = ref<number>(1)
+// ✅ 标记是否已经初始化过图标缓存
+const icons_initialized = ref<boolean>(false)
 
 // 输入上下文状态
 const inputContext = ref<InputContext>(InputContext.MainSearch)
@@ -219,7 +221,7 @@ interface LaunchTemplateInfo {
 }
 
 interface ParameterSession {
-  programGuid: number;
+  programGuid: string;  // GUID改为字符串
   ctrlKey: boolean;
   shiftKey: boolean;
   info: LaunchTemplateInfo;
@@ -455,7 +457,7 @@ const sendSearchText = async (text: string) => {
       return
     }
     const requestId = ++searchRequestId.value
-    let results: Array<[number, string, string]>
+    let results: Array<[string, string, string]>
     results = await invoke('handle_search_text', { searchText: text })
     if (requestId !== searchRequestId.value) {
       return
@@ -479,7 +481,7 @@ const resetParameterSession = () => {
   }
 }
 
-const startParameterSession = (programGuid: number, ctrlKey: boolean, shiftKey: boolean, info: LaunchTemplateInfoResponse) => {
+const startParameterSession = (programGuid: string, ctrlKey: boolean, shiftKey: boolean, info: LaunchTemplateInfoResponse) => {
   clearInlineParameterSession()
   const sessionInfo: LaunchTemplateInfo = {
     template: info.template,
@@ -536,15 +538,15 @@ const confirmParameterInput = async () => {
 }
 
 const get_latest_launch_program = async () => {
-  const results: Array<[number, string, string]> = await invoke('command_get_latest_launch_program')
+  const results: Array<[string, string, string]> = await invoke('command_get_latest_launch_program')
   latest_launch_program.value = results
   await refresh_result_items()
 }
 
 const refresh_result_items = async () => {
   if (!is_alt_pressed.value) {
-    menuItems.value = searchResults.value.map(([_id, item, command]: [number, string, string]) => ({ name: item, command }))
-    const keys = searchResults.value.map(([key]: [number, string, string]) => key)
+    menuItems.value = searchResults.value.map(([_id, item, command]: [string, string, string]) => ({ name: item, command }))
+    const keys = searchResults.value.map(([key]: [string, string, string]) => key)
     if (isEverythingMode.value) {
       menuIcons.value = new Array(keys.length).fill('')
       right_tips.value = 'Everything Search'
@@ -556,8 +558,8 @@ const refresh_result_items = async () => {
       loadIconsAsync(keys)
     }
   } else {
-    menuItems.value = latest_launch_program.value.map(([_id, item, command]: [number, string, string]) => ({ name: item, command }))
-    const keys = latest_launch_program.value.map(([key]: [number, string, string]) => key)
+    menuItems.value = latest_launch_program.value.map(([_id, item, command]: [string, string, string]) => ({ name: item, command }))
+    const keys = latest_launch_program.value.map(([key]: [string, string, string]) => key)
     // 先初始化空图标
     menuIcons.value = new Array(keys.length).fill('')
     right_tips.value = t('app.recent_open')
@@ -589,10 +591,9 @@ const openSettingsWindow = () => {
 }
 
 const refreshDataset = async () => {
-
-  await invoke('hide_window')
+  // ✅ 不再需要关闭窗口 - 后台异步刷新，无感更新
   await invoke('refresh_program')
-  updateWindow()
+  // updateWindow() 会在 refresh_program_done 事件中自动调用
 }
 
 const updateWindow = async () => {
@@ -617,19 +618,22 @@ const updateWindow = async () => {
 
     background_picture.value = url
 
-    program_icons.value.forEach((url: string) => URL.revokeObjectURL(url))
-    program_icons.value.clear()
+    // ✅ 只在首次启动时清空图标缓存
+    const forceReload = !icons_initialized.value
+    if (forceReload) {
+      program_icons.value.forEach((url: string) => URL.revokeObjectURL(url))
+      program_icons.value.clear()
+      icons_initialized.value = true
+    }
 
     if (!is_visible.value || searchText.value.length == 0) {
       // 如果没有这个，那么就会导致在没有更新完成时，结果栏也是空的，这样不好看，所以提前发送一次搜索文本
       await sendSearchText('')
     }
-    await startPreloadResource(program_count).then(async () => {
-      is_loading_icons.value = false
-      // 如果没有这个，那么可能会导致图标加载不正确（显示是空的），加了以后会再次搜索，从而显示正确的图标
-      if (!is_visible.value || searchText.value.length == 0) {
-        await sendSearchText('')
-      }
+    // ✅ 根据是否首次启动决定是否强制重载
+    // 在后台异步加载图标，不阻塞 UI
+    startPreloadResource(program_count, forceReload).catch(e => {
+      console.error('Failed to preload icons:', e)
     })
 
   } catch (error) {
@@ -637,14 +641,25 @@ const updateWindow = async () => {
   }
 }
 
-const startPreloadResource = async (program_count: number) => {
-  is_loading_icons.value = true
+// ✅ 图标加载状态跟踪（用于去重和缓存）
+interface IconLoadState {
+  startTime: number  // 开始加载的时间戳
+  endTime: number    // 结束加载的时间戳（0 表示还在加载中）
+}
+const iconLoadStates = new Map<string, IconLoadState>()
+const ICON_LOAD_CACHE_DURATION = 5 * 60 * 1000  // 5 分钟缓存
+
+const startPreloadResource = async (program_count: number, forceReload: boolean = false) => {
   const BATCH_SIZE = 100
   // use large batch size for url icons
   const BATCH_SIZE_URL = 1000
 
-  program_icons.value.forEach((url: string) => URL.revokeObjectURL(url))
-  program_icons.value.clear()
+  // ✅ 只在强制重载时清空缓存（首次启动）
+  // 刷新数据库时保留缓存，因为 GUID 是确定性的
+  if (forceReload) {
+    program_icons.value.forEach((url: string) => URL.revokeObjectURL(url))
+    program_icons.value.clear()
+  }
 
   let urlStatus: boolean[] = []
   try {
@@ -654,38 +669,100 @@ const startPreloadResource = async (program_count: number) => {
     urlStatus = new Array(program_count).fill(false)
   }
 
-  const normalIds: number[] = []
-  const urlIds: number[] = []
+  // ✅ 获取所有程序的 GUID 列表
+  let guidList: string[] = []
+  try {
+    guidList = await invoke<string[]>('get_program_guid_list')
+  } catch (error) {
+    console.error('Failed to get program GUID list:', error)
+    return
+  }
 
-  // program_count match the length of urlStatus theoretically 
-  // but safely handle index
-  for (let i = 0; i < program_count; i++) {
+  const normalGuids: string[] = []
+  const urlGuids: string[] = []
+
+  // ✅ 使用 GUID 而不是索引
+  for (let i = 0; i < guidList.length; i++) {
+    const guid = guidList[i]
+    
+    // ✅ 跳过已有缓存的图标（除非强制重载）
+    if (!forceReload && program_icons.value.has(guid)) {
+      continue
+    }
+    
     if (i < urlStatus.length && urlStatus[i]) {
-      urlIds.push(i)
+      urlGuids.push(guid)
     } else {
-      normalIds.push(i)
+      normalGuids.push(guid)
     }
   }
 
-  const loadBatch = async (ids: number[], concurrency: number) => {
+  // ✅ 如果没有需要加载的图标，直接返回
+  if (normalGuids.length === 0 && urlGuids.length === 0) {
+    console.log('All icons already cached, skip preload')
+    return
+  }
+
+  // ✅ 设置为 true，显示“正在加载图标...”
+  is_loading_icons.value = true
+
+  const loadBatch = async (guids: string[], concurrency: number) => {
     const activePromises = new Set<Promise<void>>()
 
-    for (const programId of ids) {
+    for (const programGuid of guids) {
+      // ✅ 检查是否可以跳过加载
+      const loadState = iconLoadStates.get(programGuid)
+      const now = Date.now()
+      
+      if (loadState) {
+        // 如果还在加载中，跳过
+        if (loadState.endTime === 0) {
+          console.log(`Icon for ${programGuid} is already loading, skip`)
+          continue
+        }
+        
+        // 如果距离上次加载结束不到 5 分钟，跳过
+        if (now - loadState.endTime < ICON_LOAD_CACHE_DURATION) {
+          console.log(`Icon for ${programGuid} was loaded recently, skip`)
+          continue
+        }
+      }
+      
+      // ✅ 记录开始加载时间
+      iconLoadStates.set(programGuid, {
+        startTime: now,
+        endTime: 0  // 0 表示正在加载中
+      })
+      
       if (activePromises.size >= concurrency) {
         await Promise.race(activePromises)
       }
 
       const bgTask = (async () => {
         try {
+          // ✅ 使用 GUID 加载图标（而不是索引）
           const iconData: number[] = await invoke('load_program_icon', {
-            programGuid: programId,
+            programGuid: programGuid,
           })
 
           const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
           const url = URL.createObjectURL(blob)
-          program_icons.value.set(programId, url)
+          // ✅ 用 GUID 作为 key，而不是索引
+          program_icons.value.set(programGuid, url)
+          
+          // ✅ 记录加载结束时间
+          const state = iconLoadStates.get(programGuid)
+          if (state) {
+            state.endTime = Date.now()
+          }
         } catch (error: any) {
-          console.error(`${t('app.preload_icon_failed')}: ${programId}`, error)
+          console.error(`${t('app.preload_icon_failed')}: ${programGuid}`, error)
+          
+          // ✅ 即使失败也要记录结束时间
+          const state = iconLoadStates.get(programGuid)
+          if (state) {
+            state.endTime = Date.now()
+          }
         }
       })()
 
@@ -703,21 +780,34 @@ const startPreloadResource = async (program_count: number) => {
     await Promise.all(activePromises)
   }
 
-  await Promise.all([
-    loadBatch(normalIds, BATCH_SIZE),
-    loadBatch(urlIds, BATCH_SIZE_URL)
-  ])
+  // ✅ 在后台异步加载图标，不阻塞 UI
+  // 但等待完成后设置 is_loading_icons = false
+  ;(async () => {
+    try {
+      await Promise.all([
+        loadBatch(normalGuids, BATCH_SIZE),
+        loadBatch(urlGuids, BATCH_SIZE_URL)
+      ])
+      
+      // ✅ 所有图标加载完成后，设置为 false
+      is_loading_icons.value = false
+      console.log('All icons loaded successfully')
+    } catch (e: any) {
+      console.error('Failed to load icons:', e)
+      is_loading_icons.value = false
+    }
+  })()
 }
 
 // 异步加载图标，不阻塞UI
-const loadIconsAsync = async (keys: Array<number>) => {
+const loadIconsAsync = async (keys: Array<string>) => {
   const BATCH_SIZE = 5
   const BATCH_SIZE_URL = 2
 
   // 分类程序ID：URL程序和普通程序
   const urlStatus: boolean[] = await invoke('command_get_program_url_status')
-  const normalIds: number[] = []
-  const urlIds: number[] = []
+  const normalIds: string[] = []
+  const urlIds: string[] = []
 
   for (let i = 0; i < keys.length; i++) {
     if (i < urlStatus.length && urlStatus[i]) {
@@ -727,14 +817,14 @@ const loadIconsAsync = async (keys: Array<number>) => {
     }
   }
 
-  const loadBatch = async (ids: number[], concurrency: number) => {
+  const loadBatch = async (ids: string[], concurrency: number) => {
     const activePromises = new Set<Promise<void>>()
 
-    for (const programId of ids) {
+    for (const programGuid of ids) {
       // 如果已经有缓存的图标，先显示缓存
-      if (program_icons.value.has(programId)) {
-        const cachedUrl = program_icons.value.get(programId)
-        const index = keys.indexOf(programId)
+      if (program_icons.value.has(programGuid)) {
+        const cachedUrl = program_icons.value.get(programGuid)
+        const index = keys.indexOf(programGuid)
         if (index !== -1 && cachedUrl) {
           menuIcons.value[index] = cachedUrl
         }
@@ -747,23 +837,24 @@ const loadIconsAsync = async (keys: Array<number>) => {
 
       const bgTask = (async () => {
         try {
+          // 使用 GUID 加载图标
           const iconData: number[] = await invoke('load_program_icon', {
-            programGuid: programId,
+            programGuid: programGuid,
           })
 
           if (!iconData || iconData.length === 0) return
 
           const blob = new Blob([new Uint8Array(iconData)], { type: 'image/png' })
           const url = URL.createObjectURL(blob)
-          program_icons.value.set(programId, url)
+          program_icons.value.set(programGuid, url)
           
           // 更新对应位置的图标
-          const index = keys.indexOf(programId)
+          const index = keys.indexOf(programGuid)
           if (index !== -1) {
             menuIcons.value[index] = url
           }
         } catch (error: any) {
-          console.error(`Failed to load icon for ${programId}:`, error)
+          console.error(`Failed to load icon for ${programGuid}:`, error)
         }
       })()
 
@@ -779,10 +870,17 @@ const loadIconsAsync = async (keys: Array<number>) => {
     await Promise.all(activePromises)
   }
 
-  await Promise.all([
-    loadBatch(normalIds, BATCH_SIZE),
-    loadBatch(urlIds, BATCH_SIZE_URL)
-  ])
+  // ✅ 在后台异步加载，不阻塞调用者
+  ;(async () => {
+    try {
+      await Promise.all([
+        loadBatch(normalIds, BATCH_SIZE),
+        loadBatch(urlIds, BATCH_SIZE_URL)
+      ])
+    } catch (e) {
+      console.error('Failed to load icons asynchronously:', e)
+    }
+  })()
 }
 
 const launch_program = async (itemIndex: number, ctrlKey = false, shiftKey = false) => {
@@ -1081,9 +1179,56 @@ onMounted(async () => {
   
   unlisten.push(await listen('refresh_program_start', () => {
     is_refreshing_dataset.value = true
-  }))
-  unlisten.push(await listen('refresh_program_end', () => {
+  }))  
+  // ✅ 监听刷新完成事件，重新加载图标
+  unlisten.push(await listen('refresh_program_done', async () => {
+    console.log('Refresh done, reloading icons...')
+    
+    // ✅ 刷新完成，设置状态为 false
     is_refreshing_dataset.value = false
+    
+    // ✅ 清空旧的图标缓存（因为 GUID 可能已变化）
+    program_icons.value.forEach((url: string) => URL.revokeObjectURL(url))
+    program_icons.value.clear()
+    
+    // ✅ 不清空 iconLoadStates，让时间缓存继续生效
+    // 这样可以避免短时间内重复加载相同的 URL 图标
+    
+    // ✅ 先更新窗口配置（但阻止其触发搜索）
+    // 暂时保存当前的搜索文本和可见性状态
+    const currentSearchText = searchText.value
+    const wasVisible = is_visible.value
+    
+    // 临时清空搜索文本，防止 updateWindow 触发搜索
+    searchText.value = ''
+    await updateWindow()
+    
+    // 恢复搜索文本
+    searchText.value = currentSearchText
+    
+    // ✅ 然后重新执行当前搜索（使用新数据）
+    // 无论是否有搜索文本，都需要刷新界面以反映数据变化
+    if (wasVisible) {
+      if (currentSearchText.length > 0) {
+        // 有搜索文本：重新搜索
+        await sendSearchText(currentSearchText)
+      } else {
+        // 无搜索文本：发送空搜索以刷新列表
+        await sendSearchText('')
+      }
+    }
+    
+    // ✅ 在后台异步加载图标，不阻塞搜索
+    // 从后端获取最新的程序数量
+    try {
+      const count = await invoke<number>('command_get_program_count')
+      // ✅ 使用 forceReload=true，确保获取最新的 GUID 列表
+      startPreloadResource(count, true).catch(e => {
+        console.error('Failed to preload icons in background:', e)
+      })
+    } catch (e) {
+      console.error('Failed to get program count:', e)
+    }
   }))
   unlisten.push(await listen('handle_focus_lost', () => {
     initSearchBar()
@@ -1101,6 +1246,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // ✅ 清空图标加载状态跟踪
+  iconLoadStates.clear()
+  
   window.removeEventListener('click', handleClickOutside)
   for (const listener of unlisten) {
     if (listener) {

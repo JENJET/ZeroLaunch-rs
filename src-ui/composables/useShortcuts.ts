@@ -32,8 +32,8 @@ export interface UseShortcutsOptions {
   searchText: Ref<string>
   selectedIndex: Ref<number>
   isAltPressed: Ref<boolean>
-  latestLaunchProgram: Ref<Array<[number, string, string]>>
-  searchResults: Ref<Array<[number, string, string]>>
+  latestLaunchProgram: Ref<Array<[string, string, string]>>
+  searchResults: Ref<Array<[string, string, string]>>
 
   // 组件引用
   everythingPanelRef: Ref<EverythingPanelInstance | null>

@@ -24,15 +24,16 @@ use globset::{Glob, GlobSet};
 use image::ImageReader;
 use parking_lot::RwLock;
 use regex::RegexSet;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
@@ -41,21 +42,52 @@ use windows::Win32::UI::Shell::{
     BHID_EnumItems, IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY,
 };
 use windows_core::PCWSTR;
-#[derive(Debug)]
-struct GuidGenerator {
-    next_id: AtomicU64,
-}
+/// 基于内容的确定性GUID生成器
+///
+/// 使用 LaunchMethod 的内容生成稳定的哈希值，保证：
+/// 1. 同一路径/URL始终获得相同GUID（即使重启应用或刷新数据库）
+/// 2. 图标缓存、历史记录、语义缓存等可以持续有效
+/// 3. 避免自增ID导致的缓存失效问题
+///
+/// # 哈希策略
+/// - 路径类：转小写后哈希（Windows路径不区分大小写）
+/// - URL：转小写并去除末尾斜杠后哈希
+/// - 命令：保持原始大小写哈希
+/// - 类型前缀：避免不同类型但相同文本的冲突
+fn generate_stable_guid(launch_method: &LaunchMethod) -> u64 {
+    let mut hasher = DefaultHasher::new();
 
-impl GuidGenerator {
-    pub fn new() -> Self {
-        GuidGenerator {
-            next_id: AtomicU64::new(0),
+    // 加入类型标识，避免不同类型但相同文本的冲突
+    match launch_method {
+        LaunchMethod::Path(p) => {
+            "path".hash(&mut hasher);
+            p.to_lowercase().hash(&mut hasher); // 路径不区分大小写
+        }
+        LaunchMethod::PackageFamilyName(name) => {
+            "uwp".hash(&mut hasher);
+            name.to_lowercase().hash(&mut hasher);
+        }
+        LaunchMethod::File(path) => {
+            "file".hash(&mut hasher);
+            path.to_lowercase().hash(&mut hasher);
+        }
+        LaunchMethod::Url(url) => {
+            "url".hash(&mut hasher);
+            // URL标准化：转小写，去除末尾斜杠
+            let normalized = url.to_lowercase().trim_end_matches('/').to_string();
+            normalized.hash(&mut hasher);
+        }
+        LaunchMethod::Command(cmd) => {
+            "cmd".hash(&mut hasher);
+            cmd.hash(&mut hasher); // 命令保持原始大小写
+        }
+        LaunchMethod::BuiltinCommand(cmd) => {
+            "builtin".hash(&mut hasher);
+            cmd.hash(&mut hasher);
         }
     }
-    pub fn get_guid(&self) -> u64 {
-        self.next_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    }
+
+    hasher.finish()
 }
 
 /// 路径检查器，用于判断某一个路径是不是想要的路径
@@ -150,8 +182,7 @@ pub struct ProgramLoaderInner {
     target_paths: Vec<DirectoryConfig>,
     /// 设置程序的固定权重偏移（当程序的名字中有与其完全一致的子字符串时，才会添加）
     program_bias: HashMap<String, (f64, String)>,
-    /// guid生成器
-    guid_generator: GuidGenerator,
+
     /// 判断一个程序有没有被添加
     program_name_hash: DashSet<String>,
     /// 拼音转换器
@@ -195,7 +226,7 @@ impl ProgramLoaderInner {
         ProgramLoaderInner {
             target_paths: Vec::new(),
             program_bias: HashMap::new(),
-            guid_generator: GuidGenerator::new(),
+
             program_name_hash: DashSet::new(),
             pinyin_mapper: PinyinMapper::new(),
             is_scan_uwp_programs: true,
@@ -239,7 +270,7 @@ impl ProgramLoaderInner {
         self.forbidden_paths = config.get_forbidden_paths();
         self.program_bias = config.get_program_bias();
         self.is_scan_uwp_programs = config.get_is_scan_uwp_programs();
-        self.guid_generator = GuidGenerator::new();
+
         self.program_name_hash = DashSet::new();
         self.index_web_pages = config.get_index_web_pages();
         self.custom_command = config.get_custom_command();
@@ -338,8 +369,6 @@ impl ProgramLoaderInner {
 
     /// 获取当前电脑上所有的程序
     pub fn load_program(&mut self) -> Vec<Arc<Program>> {
-        use tracing::{debug, info};
-
         info!("🔄 开始加载程序列表");
 
         // 开始计时
@@ -427,7 +456,8 @@ impl ProgramLoaderInner {
         mut search_keywords: Vec<String>,
         icon_request: IconRequest,
     ) -> Arc<Program> {
-        let guid = self.guid_generator.get_guid();
+        // 使用基于内容的确定性GUID（同一路径始终获得相同GUID）
+        let guid = generate_stable_guid(&launch_method);
         let stable_bias = self.get_program_bias(&unique_name);
 
         // 如果用户自己添加了别名，则添加上去
