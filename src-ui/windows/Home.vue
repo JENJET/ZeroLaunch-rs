@@ -205,7 +205,8 @@ const toggleEverythingMode = async () => {
     if (searchText.value) {
       await sendSearchText(searchText.value)
     } else {
-      await refresh_result_items()
+      //await refresh_result_items()
+      await sendSearchText("")
     }
   } else {
     // 从主搜索切换到 Everything
