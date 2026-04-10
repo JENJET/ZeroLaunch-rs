@@ -101,7 +101,7 @@
                                         {{ t('icon_management.change_icon') }}
                                     </el-button>
                                     <el-button 
-                                        v-if="!scope.row.is_builtin" 
+                                        v-if="!scope.row.is_builtin && config.icon_manager_config.enable_icon_cache" 
                                         size="small" 
                                         type="danger" 
                                         @click="handleResetCache(scope.row)"

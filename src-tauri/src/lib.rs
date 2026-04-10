@@ -64,6 +64,8 @@ use tauri::App;
 use tauri::Emitter;
 use tauri::LogicalSize;
 use tauri::Manager;
+use tauri::PhysicalPosition;
+use tauri::PhysicalSize;
 use tauri::WebviewUrl;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::{debug, error, info, warn};
@@ -557,6 +559,21 @@ fn register_icon_path(app: &mut App) {
 
 fn init_setting_window(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let state = ServiceLocator::get_state();
+        let config = state.get_runtime_config();
+        let setting_window_state = config.get_setting_window_state();
+
+        // 从配置中读取保存的窗口位置和大小
+        let saved_x = setting_window_state.get_window_x();
+        let saved_y = setting_window_state.get_window_y();
+        let saved_width = setting_window_state.get_window_width();
+        let saved_height = setting_window_state.get_window_height();
+
+        info!(
+            "Loaded setting window state from config: x={}, y={}, width={}, height={}",
+            saved_x, saved_y, saved_width, saved_height
+        );
+
         let setting_window = Arc::new(
             tauri::WebviewWindowBuilder::new(
                 &app,
@@ -569,12 +586,147 @@ fn init_setting_window(app: tauri::AppHandle) {
             .build()
             .expect_programming("无法创建设置窗口"),
         );
+
+        // 获取主监视器信息以计算居中位置
+        let mut should_center = true;
+        let mut centered_x = 100i32; // 默认偏移，避免完全在边缘
+        let mut centered_y = 100i32;
+
+        match setting_window.primary_monitor() {
+            Ok(Some(monitor)) => {
+                let monitor_size = monitor.size();
+                let monitor_position = monitor.position();
+
+                info!(
+                    "Monitor info: position=({}, {}), size={}x{}",
+                    monitor_position.x, monitor_position.y, monitor_size.width, monitor_size.height
+                );
+
+                // 智能调整窗口大小：如果窗口大小超过屏幕的80%，则缩小
+                let max_width = (monitor_size.width as f64 * 0.8) as u32;
+                let max_height = (monitor_size.height as f64 * 0.8) as u32;
+                let mut adjusted_width = saved_width;
+                let mut adjusted_height = saved_height;
+
+                if saved_width > max_width || saved_height > max_height {
+                    // 保持宽高比缩放
+                    let width_ratio = max_width as f64 / saved_width as f64;
+                    let height_ratio = max_height as f64 / saved_height as f64;
+                    let scale = width_ratio.min(height_ratio).min(1.0); // 不超过原始大小
+
+                    adjusted_width = (saved_width as f64 * scale) as u32;
+                    adjusted_height = (saved_height as f64 * scale) as u32;
+
+                    // 确保最小尺寸
+                    adjusted_width = adjusted_width.max(800);
+                    adjusted_height = adjusted_height.max(500);
+
+                    info!(
+                        "Window size {}x{} exceeds 80% of screen, adjusted to {}x{}",
+                        saved_width, saved_height, adjusted_width, adjusted_height
+                    );
+                }
+
+                // 检查保存的位置是否有效（不是默认的0,0）
+                if saved_x != 0 || saved_y != 0 {
+                    info!("Saved position is not (0,0), checking bounds...");
+                    // 检查窗口是否在屏幕可视区域内（使用调整后的大小）
+                    if saved_x >= monitor_position.x
+                        && saved_y >= monitor_position.y
+                        && saved_x + adjusted_width as i32
+                            <= monitor_position.x + monitor_size.width as i32
+                        && saved_y + adjusted_height as i32
+                            <= monitor_position.y + monitor_size.height as i32
+                    {
+                        should_center = false;
+                        info!("Saved position is within screen bounds, will use saved position");
+                    } else {
+                        info!("Saved position is out of screen bounds, will center window");
+                    }
+                } else {
+                    info!("Saved position is (0,0) or default, will center window");
+                }
+
+                // 计算居中位置（使用调整后的大小）
+                centered_x =
+                    monitor_position.x + (monitor_size.width as i32 - adjusted_width as i32) / 2;
+                centered_y =
+                    monitor_position.y + (monitor_size.height as i32 - adjusted_height as i32) / 2;
+
+                // 应用调整后的窗口大小
+                setting_window
+                    .set_size(PhysicalSize::new(adjusted_width, adjusted_height))
+                    .expect_programming("无法设置设置窗口大小");
+            }
+            Ok(None) => {
+                warn!("No primary monitor found, using default position (100, 100)");
+                // 使用默认大小
+                setting_window
+                    .set_size(PhysicalSize::new(saved_width, saved_height))
+                    .expect_programming("无法设置设置窗口大小");
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to get primary monitor: {:?}, using default position (100, 100)",
+                    e
+                );
+                // 使用默认大小
+                setting_window
+                    .set_size(PhysicalSize::new(saved_width, saved_height))
+                    .expect_programming("无法设置设置窗口大小");
+            }
+        }
+
+        // 应用位置：如果应该居中则使用居中位置，否则使用保存的位置
+        let final_x = if should_center { centered_x } else { saved_x };
+        let final_y = if should_center { centered_y } else { saved_y };
+
         setting_window
-            .set_size(LogicalSize::new(950, 500))
-            .expect_programming("无法设置设置窗口大小");
+            .set_position(PhysicalPosition::new(final_x, final_y))
+            .expect_programming("无法设置设置窗口位置");
+
+        if should_center {
+            info!(
+                "Setting window centered at: x={}, y={}, size: {}x{}",
+                final_x, final_y, saved_width, saved_height
+            );
+        } else {
+            info!(
+                "Setting window restored to saved position: x={}, y={}, size: {}x{}",
+                final_x, final_y, saved_width, saved_height
+            );
+        }
+
         let window_clone = Arc::clone(&setting_window);
+        let config_clone = config.clone();
         setting_window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 保存当前位置和大小到配置（使用物理像素）
+                if let (Ok(position), Ok(size)) =
+                    (window_clone.outer_position(), window_clone.outer_size())
+                {
+                    use crate::modules::config::setting_window_state::PartialSettingWindowState;
+                    config_clone.update(PartialRuntimeConfig {
+                        setting_window_state: Some(PartialSettingWindowState {
+                            window_x: Some(position.x),
+                            window_y: Some(position.y),
+                            window_width: Some(size.width),
+                            window_height: Some(size.height),
+                        }),
+                        ..Default::default()
+                    });
+                    info!(
+                        "Saved setting window state to memory: x={}, y={}, width={}, height={}",
+                        position.x, position.y, size.width, size.height
+                    );
+
+                    // 异步保存配置到文件
+                    tauri::async_runtime::spawn(async move {
+                        save_config_to_file(false).await;
+                        info!("Setting window state saved to file");
+                    });
+                }
+
                 // 阻止窗口关闭
                 api.prevent_close();
                 // 隐藏窗口
@@ -774,6 +926,7 @@ pub async fn save_config_to_file(is_update_app: bool) {
         everything_config: None,
         refresh_scheduler_config: None,
         bookmark_loader_config: None,
+        setting_window_state: None,
     });
     let remote_config = runtime_config.to_partial();
 

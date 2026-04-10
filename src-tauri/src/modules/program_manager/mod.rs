@@ -98,9 +98,9 @@ pub(crate) struct SearchModelResult {
 pub struct ProgramDisplayInfo {
     pub name: String,
     pub path: String,
-    pub program_guid: String,  // ✅ 使用字符串避免JavaScript数字精度丢失
+    pub program_guid: String, // ✅ 使用字符串避免JavaScript数字精度丢失
     pub icon_request_json: String,
-    pub is_builtin: bool,  // 标识是否是内置命令
+    pub is_builtin: bool, // 标识是否是内置命令
 }
 
 impl ProgramManager {
@@ -615,7 +615,7 @@ impl ProgramManager {
             .map(|program| ProgramDisplayInfo {
                 name: program.show_name.clone(),
                 path: program.launch_method.get_text().clone(),
-                program_guid: program.program_guid.to_string(),  // ✅ 转换为字符串避免JS精度丢失
+                program_guid: program.program_guid.to_string(), // ✅ 转换为字符串避免JS精度丢失
                 icon_request_json: serde_json::to_string(&program.icon_request).unwrap_or_default(),
                 is_builtin: matches!(program.launch_method, LaunchMethod::BuiltinCommand(_)),
             });

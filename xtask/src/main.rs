@@ -11,6 +11,13 @@ use std::process::Command;
 use zip::ZipWriter;
 use zip::write::FileOptions;
 
+/// 带时间戳的打印函数（精确到毫秒）
+fn println_with_timestamp(msg: &str) {
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
+    println!("[{}] {}", timestamp, msg);
+}
+
 #[derive(Clone, Debug, ValueEnum)]
 enum Architecture {
     /// x86_64 架构
@@ -142,18 +149,18 @@ fn collect_build_targets(arch: &Architecture, ai_modes: &[AiMode]) -> Vec<BuildT
 
 fn print_build_plan(kind: BuildKind, targets: &[BuildTarget], version: &str) {
     if targets.is_empty() {
-        println!("⚠️ 当前命令未匹配到任何 {} 构建目标。", kind.description());
+        println_with_timestamp("⚠️ 当前命令未匹配到任何 {} 构建目标。");
         return;
     }
 
-    println!("📋 将构建以下 {}:", kind.description());
+    println_with_timestamp(&format!("📋 将构建以下 {}:", kind.description()));
     for target in targets {
-        println!(
+        println_with_timestamp(&format!(
             "  ▶️ {} | 架构: {} | 模式: {}",
             kind.item_label(),
             target.arch.display(),
             target.ai_mode.display()
-        );
+        ));
 
         match kind {
             BuildKind::Installer => {
@@ -165,8 +172,8 @@ fn print_build_plan(kind: BuildKind, targets: &[BuildTarget], version: &str) {
                 let base_msi = format!("ZeroLaunch_{}_{}_en-US.msi", version, target.arch.label());
                 let final_nsis = generate_installer_name(&base_nsis, version, target.ai_mode);
                 let final_msi = generate_installer_name(&base_msi, version, target.ai_mode);
-                println!("      • {}", final_nsis);
-                println!("      • {}", final_msi);
+                println_with_timestamp(&format!("      • {}", final_nsis));
+                println_with_timestamp(&format!("      • {}", final_msi));
             }
             BuildKind::Portable => {
                 let suffix = if target.ai_mode.is_enabled() {
@@ -180,7 +187,7 @@ fn print_build_plan(kind: BuildKind, targets: &[BuildTarget], version: &str) {
                     version,
                     target.arch.label()
                 );
-                println!("      • {}", zip_name);
+                println_with_timestamp(&format!("      • {}", zip_name));
             }
         }
     }
@@ -231,46 +238,46 @@ enum Commands {
 async fn main() -> Result<()> {
     //  切换工作目录
     let current_dir = env::current_dir()?;
-    println!("当前工作目录是: {}", current_dir.display());
+    println_with_timestamp(&format!("当前工作目录是: {}", current_dir.display()));
     let parent_dir = current_dir
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "无法获取父目录，可能已在根目录"))?;
     env::set_current_dir(parent_dir)?;
-    println!("成功切换到父目录。");
+    println_with_timestamp("成功切换到父目录。");
     let new_current_dir = env::current_dir()?;
-    println!("新的当前工作目录: {}", new_current_dir.display());
+    println_with_timestamp(&format!("新的当前工作目录: {}", new_current_dir.display()));
 
-    println!("ZeroLaunch开启了lto优化，所以编译时间会长达数分钟，请耐心等待...");
+    println_with_timestamp("ZeroLaunch开启了lto优化，所以编译时间会长达数分钟，请耐心等待...");
 
     let cli = Cli::parse();
 
     match &cli.command {
         Commands::BuildAll { arch, ai } => {
-            println!("🚀 开始构建所有版本...");
+            println_with_timestamp("🚀 开始构建所有版本...");
             let version = get_app_version()?;
             let ai_modes = ai.modes();
             build_installer_versions(arch, &ai_modes, &version).await?;
             build_portable_versions(arch, &ai_modes, &version).await?;
-            println!("✅ 所有版本构建完成！");
+            println_with_timestamp("✅ 所有版本构建完成！");
         }
         Commands::BuildInstaller { arch, ai } => {
-            println!("🚀 开始构建安装包版本...");
+            println_with_timestamp("🚀 开始构建安装包版本...");
             let version = get_app_version()?;
             let ai_modes = vec![*ai];
             build_installer_versions(arch, &ai_modes, &version).await?;
-            println!("✅ 安装包版本构建完成！");
+            println_with_timestamp("✅ 安装包版本构建完成！");
         }
         Commands::BuildPortable { arch, ai } => {
-            println!("🚀 开始构建便携版本...");
+            println_with_timestamp("🚀 开始构建便携版本...");
             let version = get_app_version()?;
             let ai_modes = vec![*ai];
             build_portable_versions(arch, &ai_modes, &version).await?;
-            println!("✅ 便携版本构建完成！");
+            println_with_timestamp("✅ 便携版本构建完成！");
         }
         Commands::Clean => {
-            println!("🧹 清理构建产物...");
+            println_with_timestamp("🧹 清理构建产物...");
             clean_build_artifacts()?;
-            println!("✅ 清理完成！");
+            println_with_timestamp("✅ 清理完成！");
         }
     }
 
@@ -294,11 +301,11 @@ async fn build_installer_versions(
 }
 
 async fn build_single_installer(target: BuildTarget, version: &str) -> Result<()> {
-    println!(
+    println_with_timestamp(&format!(
         "📦 构建安装包 -> 架构: {} | 模式: {}",
         target.arch.display(),
         target.ai_mode.display()
-    );
+    ));
 
     let mut args = vec![
         "bun".to_string(),
@@ -345,11 +352,11 @@ async fn build_portable_versions(
 }
 
 async fn build_single_portable(target: BuildTarget, version: &str) -> Result<()> {
-    println!(
+    println_with_timestamp(&format!(
         "📦 构建便携版 -> 架构: {} | 模式: {}",
         target.arch.display(),
         target.ai_mode.display()
-    );
+    ));
 
     let mut args = vec![
         "bun".to_string(),
@@ -393,11 +400,11 @@ fn move_installer_to_root(target_arch: TargetArch, version: &str, ai_mode: AiMod
         .join("bundle");
 
     if !bundle_dir.exists() {
-        println!(
+        println_with_timestamp(&format!(
             "⚠️  未找到 {} ({}) 的 bundle 目录，跳过移动安装包。",
             target_arch.triple(),
             target_arch.display()
-        );
+        ));
         return Ok(());
     }
 
@@ -441,7 +448,7 @@ fn move_installer_to_root(target_arch: TargetArch, version: &str, ai_mode: AiMod
 
                         fs::copy(&source_path, &dest_path)
                             .context(format!("无法将 {:?} 复制到 {:?}", source_path, dest_path))?;
-                        println!("✅ 已将安装包 {} 移动到根目录", dest_name.to_string_lossy());
+                        println_with_timestamp(&format!("✅ 已将安装包 {} 移动到根目录", dest_name.to_string_lossy()));
                     }
                 }
             }
@@ -490,7 +497,7 @@ async fn run_command(args: Vec<String>) -> Result<()> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.is_empty() {
-        println!("{}", stdout);
+        println_with_timestamp(&stdout);
     }
 
     Ok(())
@@ -512,20 +519,20 @@ async fn package_portable_variant(target: BuildTarget, version: &str) -> Result<
     );
 
     if let Some(exe_path) = find_portable_exe(target_dir, target.arch)? {
-        println!(
+        println_with_timestamp(&format!(
             "📦 打包便携版 -> 架构: {} | 模式: {} => {}",
             target.arch.display(),
             target.ai_mode.display(),
             zip_name
-        );
+        ));
         create_portable_zip(&exe_path, &zip_name, target.arch).await?;
-        println!("✅ 便携版打包完成: {}", zip_name);
+        println_with_timestamp(&format!("✅ 便携版打包完成: {}", zip_name));
     } else {
-        println!(
+        println_with_timestamp(&format!(
             "⚠️ 未找到 {} ({}) 的便携版可执行文件，跳过打包。",
             target.arch.triple(),
             target.arch.display()
-        );
+        ));
     }
 
     Ok(())
@@ -536,11 +543,11 @@ fn find_portable_exe(target_dir: &Path, arch: TargetArch) -> Result<Option<PathB
     let release_dir = target_dir.join(arch.triple()).join("release");
 
     if !release_dir.exists() {
-        println!(
+        println_with_timestamp(&format!(
             "⚠️  未找到 {} ({}) 的构建目录",
             arch.triple(),
             arch.display()
-        );
+        ));
         return Ok(None);
     }
 
@@ -558,11 +565,11 @@ fn find_portable_exe(target_dir: &Path, arch: TargetArch) -> Result<Option<PathB
         }
     }
 
-    println!(
+    println_with_timestamp(&format!(
         "⚠️  未找到 {} ({}) 的可执行文件",
         arch.triple(),
         arch.display()
-    );
+    ));
     Ok(None)
 }
 
@@ -634,7 +641,6 @@ fn add_directory_to_zip(
     zip_dir_name: &str,
     options: &FileOptions<()>,
 ) -> Result<()> {
-    // ... 函数体保持不变
     for entry in fs::read_dir(dir_path)? {
         let entry = entry?;
         let path = entry.path();
@@ -675,10 +681,10 @@ fn clean_build_artifacts() -> Result<()> {
                             if root_file_path.exists() {
                                 fs::remove_file(root_file_path)
                                     .context(format!("删除根目录的 {:?} 失败", file_name))?;
-                                println!(
+                                println_with_timestamp(&format!(
                                     "🧹 已清理根目录下的安装包: {}",
                                     file_name.to_string_lossy()
-                                );
+                                ));
                             }
 
                             if let (Some(version), Some(name_str)) =
@@ -693,7 +699,7 @@ fn clean_build_artifacts() -> Result<()> {
                                             "删除根目录的 {:?} 失败",
                                             no_ai_name
                                         ))?;
-                                        println!("🧹 已清理根目录下的安装包: {}", no_ai_name);
+                                        println_with_timestamp(&format!("🧹 已清理根目录下的安装包: {}", no_ai_name));
                                     }
                                 }
                             }
@@ -706,7 +712,7 @@ fn clean_build_artifacts() -> Result<()> {
 
     if target_dir.exists() {
         fs::remove_dir_all(target_dir).context("删除 target 目录失败")?;
-        println!("🧹 已清理 {}", target_dir.display());
+        println_with_timestamp(&format!("🧹 已清理 {}", target_dir.display()));
     }
 
     // 删除生成的 ZIP 文件
@@ -719,7 +725,7 @@ fn clean_build_artifacts() -> Result<()> {
             if let Some(name_str) = name.to_str() {
                 if name_str.starts_with("ZeroLaunch-portable-") && name_str.ends_with(".zip") {
                     fs::remove_file(entry.path()).context(format!("删除 {} 失败", name_str))?;
-                    println!("🧹 已清理 {}", name_str);
+                    println_with_timestamp(&format!("🧹 已清理 {}", name_str));
                 }
             }
         }

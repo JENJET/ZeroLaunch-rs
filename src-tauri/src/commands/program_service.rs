@@ -759,9 +759,7 @@ pub async fn command_update_program_icon(
 }
 
 #[tauri::command]
-pub async fn command_reset_icon_cache(
-    icon_request_json: String,
-) -> Result<(), String> {
+pub async fn command_reset_icon_cache(icon_request_json: String) -> Result<(), String> {
     let state = ServiceLocator::get_state();
     let icon_manager = state.get_icon_manager();
 

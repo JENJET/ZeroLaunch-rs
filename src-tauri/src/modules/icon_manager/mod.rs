@@ -337,7 +337,7 @@ impl IconManagerInner {
             tokio::fs::remove_file(&icon_path)
                 .await
                 .map_err(|e| format!("Failed to remove cache file: {}", e))?;
-            
+
             let hash_for_log = hash_name.clone();
             info!("Icon cache reset: {}", hash_for_log);
         }

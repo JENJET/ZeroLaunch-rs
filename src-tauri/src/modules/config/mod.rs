@@ -4,6 +4,7 @@ use config_manager::PartialRuntimeConfig;
 pub mod app_config;
 pub mod config_manager;
 pub mod default;
+pub mod setting_window_state;
 pub mod ui_config;
 pub mod window_state;
 

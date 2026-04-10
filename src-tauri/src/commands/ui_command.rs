@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::Runtime;
+use tracing::info;
 
 #[tauri::command]
 pub async fn update_search_bar_window<R: Runtime>(
@@ -146,6 +147,103 @@ pub fn show_setting_window() -> Result<(), String> {
         Some(window) => window,
         None => return Err("Failed to get setting window".to_string()),
     };
+
+    // 从配置中读取保存的窗口位置和大小
+    let config = state.get_runtime_config();
+    let setting_window_state = config.get_setting_window_state();
+    let saved_x = setting_window_state.get_window_x();
+    let saved_y = setting_window_state.get_window_y();
+    let saved_width = setting_window_state.get_window_width();
+    let saved_height = setting_window_state.get_window_height();
+
+    // 获取主监视器信息
+    if let Some(monitor) = setting_window
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+    {
+        let monitor_size = monitor.size();
+        let monitor_position = monitor.position();
+
+        // 智能调整窗口大小：如果窗口大小超过屏幕的80%，则缩小
+        let max_width = (monitor_size.width as f64 * 0.8) as u32;
+        let max_height = (monitor_size.height as f64 * 0.8) as u32;
+        let mut adjusted_width = saved_width;
+        let mut adjusted_height = saved_height;
+
+        if saved_width > max_width || saved_height > max_height {
+            // 保持宽高比缩放
+            let width_ratio = max_width as f64 / saved_width as f64;
+            let height_ratio = max_height as f64 / saved_height as f64;
+            let scale = width_ratio.min(height_ratio).min(1.0);
+
+            adjusted_width = (saved_width as f64 * scale) as u32;
+            adjusted_height = (saved_height as f64 * scale) as u32;
+
+            // 确保最小尺寸
+            adjusted_width = adjusted_width.max(800);
+            adjusted_height = adjusted_height.max(500);
+
+            info!(
+                "Window size {}x{} exceeds 80% of screen, adjusted to {}x{}",
+                saved_width, saved_height, adjusted_width, adjusted_height
+            );
+        }
+
+        // 检查窗口是否超出屏幕边界或为默认位置
+        let mut should_center = false;
+
+        // 如果位置是默认的 (0, 0)，则居中
+        if saved_x == 0 && saved_y == 0 {
+            should_center = true;
+            info!("Setting window position is default (0,0), will center it");
+        }
+        // 检查窗口是否在屏幕可视区域内（使用调整后的大小）
+        else if saved_x < monitor_position.x
+            || saved_y < monitor_position.y
+            || saved_x + adjusted_width as i32 > monitor_position.x + monitor_size.width as i32
+            || saved_y + adjusted_height as i32 > monitor_position.y + monitor_size.height as i32
+        {
+            should_center = true;
+            info!(
+                "Setting window is out of screen bounds, will center it. Saved position: x={}, y={}, size: {}x{}, Monitor: position=({}, {}), size={}x{}",
+                saved_x, saved_y, saved_width, saved_height,
+                monitor_position.x, monitor_position.y,
+                monitor_size.width, monitor_size.height
+            );
+        }
+
+        if should_center {
+            // 计算居中位置（使用调整后的大小）
+            let centered_x =
+                monitor_position.x + (monitor_size.width as i32 - adjusted_width as i32) / 2;
+            let centered_y =
+                monitor_position.y + (monitor_size.height as i32 - adjusted_height as i32) / 2;
+
+            // 应用居中位置
+            use tauri::PhysicalPosition;
+            setting_window
+                .set_position(PhysicalPosition::new(centered_x, centered_y))
+                .map_err(|e| format!("Failed to set window position: {:?}", e))?;
+
+            info!(
+                "Centered setting window at: x={}, y={}",
+                centered_x, centered_y
+            );
+        } else {
+            // 使用保存的位置
+            use tauri::PhysicalPosition;
+            setting_window
+                .set_position(PhysicalPosition::new(saved_x, saved_y))
+                .map_err(|e| format!("Failed to set window position: {:?}", e))?;
+        }
+
+        // 应用调整后的窗口大小（使用物理像素）
+        use tauri::PhysicalSize;
+        setting_window
+            .set_size(PhysicalSize::new(adjusted_width, adjusted_height))
+            .map_err(|e| format!("Failed to set window size: {:?}", e))?;
+    }
+
     let _ = setting_window.unminimize();
     if let Err(e) = setting_window.show() {
         return Err(format!("Failed to show setting window: {:?}", e));
