@@ -227,6 +227,7 @@ pub fn run() {
             command_export_logs,
             command_search_programs_lightweight,
             command_update_program_icon,
+            command_reset_icon_cache,
             command_add_forbidden_path,
             command_get_program_path,
             command_copy_program_path_to_clipboard,

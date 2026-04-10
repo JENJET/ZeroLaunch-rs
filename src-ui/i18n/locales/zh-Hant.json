@@ -180,6 +180,9 @@
     "path": "路徑",
     "actions": "操作",
     "change_icon": "更改圖示",
+    "reset_cache": "重置快取",
+    "reset_cache_success": "圖示快取重置成功",
+    "reset_cache_failed": "圖示快取重置失敗",
     "update_success": "圖示更新成功",
     "update_failed": "圖示更新失敗",
     "refresh_note": "請開啟圖示快取功能！圖示更新完成後，請手動刷新程式資料庫。刷新成功後，新圖示才會在介面中正確顯示。"

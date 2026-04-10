@@ -323,6 +323,28 @@ impl IconManagerInner {
         }
     }
 
+    /// 删除指定图标的缓存文件
+    pub async fn reset_icon_cache(&self, icon_request: &IconRequest) -> Result<(), String> {
+        let hash_name = icon_request.get_hash_string() + ".png";
+        let cached_icon_dir = ICON_CACHE_DIR.clone();
+        let icon_path = Path::new(&cached_icon_dir).join(&hash_name);
+
+        // 从内存缓存中移除
+        self.cached_icons.remove(&hash_name);
+
+        // 删除磁盘上的缓存文件
+        if icon_path.exists() {
+            tokio::fs::remove_file(&icon_path)
+                .await
+                .map_err(|e| format!("Failed to remove cache file: {}", e))?;
+            
+            let hash_for_log = hash_name.clone();
+            info!("Icon cache reset: {}", hash_for_log);
+        }
+
+        Ok(())
+    }
+
     /// 后台静默刷新图标
     fn spawn_background_refresh(&self, request: IconRequest, hash_name: String) {
         let pending_clone = self.pending_requests.clone();
@@ -582,6 +604,10 @@ impl IconManager {
             .map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+
+    pub async fn reset_icon_cache(&self, icon_request: &IconRequest) -> Result<(), String> {
+        self.inner.reset_icon_cache(icon_request).await
     }
 
     pub async fn get_everything_icon(&self, path: String) -> Vec<u8> {

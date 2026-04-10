@@ -94,11 +94,21 @@
                             </template>
                         </el-table-column>
 
-                        <el-table-column :label="t('icon_management.actions')" width="120" fixed="right">
+                        <el-table-column :label="t('icon_management.actions')" width="180" fixed="right">
                             <template #default="scope">
-                                <el-button size="small" type="primary" @click="handleChangeIcon(scope.row)">
-                                    {{ t('icon_management.change_icon') }}
-                                </el-button>
+                                <div class="action-buttons">
+                                    <el-button size="small" type="primary" @click="handleChangeIcon(scope.row)">
+                                        {{ t('icon_management.change_icon') }}
+                                    </el-button>
+                                    <el-button 
+                                        v-if="!scope.row.is_builtin" 
+                                        size="small" 
+                                        type="danger" 
+                                        @click="handleResetCache(scope.row)"
+                                    >
+                                        {{ t('icon_management.reset_cache') }}
+                                    </el-button>
+                                </div>
                             </template>
                         </el-table-column>
                     </el-table>
@@ -168,6 +178,22 @@ const openIconCacheDir = async () => {
         await invoke('command_open_icon_cache_dir')
     } catch (e) {
         console.error('Failed to open icon cache dir', e)
+    }
+}
+
+const handleResetCache = async (program: ProgramDisplayInfo) => {
+    try {
+        await invoke('command_reset_icon_cache', {
+            iconRequestJson: program.icon_request_json
+        })
+
+        // Force refresh icon to show the new cached icon
+        await refreshIcon(program)
+
+        ElMessage.success(t('icon_management.reset_cache_success'))
+    } catch (e) {
+        console.error('Failed to reset cache', e)
+        ElMessage.error(t('icon_management.reset_cache_failed') + `: ${e}`)
     }
 }
 
@@ -282,5 +308,10 @@ handleSearch()
     font-size: 12px;
     color: #909399;
     word-break: break-all;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
 }
 </style>

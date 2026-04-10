@@ -758,6 +758,22 @@ pub async fn command_update_program_icon(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn command_reset_icon_cache(
+    icon_request_json: String,
+) -> Result<(), String> {
+    let state = ServiceLocator::get_state();
+    let icon_manager = state.get_icon_manager();
+
+    let icon_request: IconRequest =
+        serde_json::from_str(&icon_request_json).map_err(|e| e.to_string())?;
+
+    icon_manager
+        .reset_icon_cache(&icon_request)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 添加屏蔽路径（用于右键菜单屏蔽功能）
 /// 将路径添加到 forbidden_paths 配置中，并保存配置文件
 /// 需要用户手动刷新数据库后才能生效

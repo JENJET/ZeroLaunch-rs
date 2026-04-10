@@ -180,6 +180,9 @@
     "path": "Path",
     "actions": "Actions",
     "change_icon": "Change Icon",
+    "reset_cache": "Reset Cache",
+    "reset_cache_success": "Icon cache reset successfully",
+    "reset_cache_failed": "Failed to reset icon cache",
     "update_success": "Icon updated successfully",
     "update_failed": "Failed to update icon",
     "refresh_note": "Please enable icon cache! After updating an icon, please refresh the program database manually. The new icon will appear correctly after a successful refresh."

@@ -180,6 +180,9 @@
     "path": "路径",
     "actions": "操作",
     "change_icon": "更改图标",
+    "reset_cache": "重置缓存",
+    "reset_cache_success": "图标缓存重置成功",
+    "reset_cache_failed": "图标缓存重置失败",
     "update_success": "图标更新成功",
     "update_failed": "图标更新失败",
     "refresh_note": "请开启图标缓存功能！图标更新完成后，请手动刷新程序数据库。刷新成功后，新图标才会在界面中正确显示。"
