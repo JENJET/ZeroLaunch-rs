@@ -621,7 +621,22 @@ impl ProgramManager {
 
         let iter = registry
             .iter()
-            .filter(|program| program.show_name.to_lowercase().contains(&keyword))
+            .filter(|program| {
+                // 搜索程序名称
+                let name_match = program.show_name.to_lowercase().contains(&keyword);
+                // 搜索路径
+                let path_match = program
+                    .launch_method
+                    .get_text()
+                    .to_lowercase()
+                    .contains(&keyword);
+                // 搜索关键字（包含别名）
+                let keyword_match = program
+                    .search_keywords
+                    .iter()
+                    .any(|kw| kw.to_lowercase().contains(&keyword));
+                name_match || path_match || keyword_match
+            })
             .map(|program| ProgramDisplayInfo {
                 name: program.show_name.clone(),
                 path: program.launch_method.get_text().clone(),

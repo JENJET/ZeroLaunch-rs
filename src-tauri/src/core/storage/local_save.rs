@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::warn;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PartialLocalSaveConfig {
@@ -128,6 +129,21 @@ impl StorageClient for LocalStorageInner {
         })
     }
 
+    async fn delete(&self, file_path: String) -> AppResult<()> {
+        let target_path = self.remote_config_dir.join(file_path);
+        // 尝试删除文件，如果文件不存在则忽略错误
+        match tokio::fs::remove_file(&target_path).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // 文件不存在，视为成功
+                Ok(())
+            }
+            Err(e) => Err(crate::error::AppError::StorageError {
+                message: format!("删除文件失败 {}: {}", target_path.display(), e),
+            }),
+        }
+    }
+
     async fn get_target_dir_path(&self) -> String {
         self.remote_config_dir
             .to_str()
@@ -153,6 +169,15 @@ impl StorageClient for LocalStorageInner {
             .is_err()
         {
             return false;
+        }
+
+        // 测试完成后删除测试文件
+        if self
+            .delete(TEST_CONFIG_FILE_NAME.to_string())
+            .await
+            .is_err()
+        {
+            warn!("Failed to delete test file: {}", TEST_CONFIG_FILE_NAME);
         }
 
         true
@@ -182,6 +207,11 @@ impl StorageClient for LocalStorage {
     async fn upload(&self, file_path: String, data: Vec<u8>) -> AppResult<()> {
         let inner = self.inner.read().await;
         inner.upload(file_path, data).await
+    }
+
+    async fn delete(&self, file_path: String) -> AppResult<()> {
+        let inner = self.inner.read().await;
+        inner.delete(file_path).await
     }
 
     async fn get_target_dir_path(&self) -> String {

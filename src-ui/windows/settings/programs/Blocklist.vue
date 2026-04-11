@@ -33,7 +33,9 @@
             :data="programList"
             stripe
             style="width: 100%"
-            height="300px"
+            height="380"
+            class="program-table"
+            :row-style="{ height: 'auto' }"
           >
             <el-table-column
               :label="t('icon_management.icon')"
@@ -62,6 +64,22 @@
               width="150"
               show-overflow-tooltip
             />
+
+            <el-table-column :label="t('program_index.alias')" width="140">
+              <template #default="{ row }">
+                <div class="alias-tags">
+                  <el-tag
+                    v-for="(alias, index) in getAliases(row.path)"
+                    :key="index"
+                    size="small"
+                    class="alias-tag"
+                  >
+                    {{ alias }}
+                  </el-tag>
+                  <span v-if="getAliases(row.path).length === 0" class="no-alias">-</span>
+                </div>
+              </template>
+            </el-table-column>
 
             <el-table-column
               :label="t('icon_management.path')"
@@ -166,6 +184,11 @@ const { t } = useI18n()
 const configStore = useRemoteConfigStore()
 const { config } = storeToRefs(configStore)
 
+// 获取程序别名的函数
+const getAliases = (path: string) => {
+    return config.value.program_manager_config.loader.program_alias[path] || []
+}
+
 const {
     searchKeyword,
     loading,
@@ -175,7 +198,9 @@ const {
     toggleShowAll,
     getIconUrl,
     isIconLoading
-} = useProgramSearch()
+} = useProgramSearch({
+    getAliasFn: getAliases
+})
 
 const forbidden_paths = computed({
     get: () => config.value.program_manager_config.loader.forbidden_paths,
@@ -307,9 +332,6 @@ const handleSelectFile = async () => {
     border-radius: 4px;
 }
 
-.program-table {
-    max-height: 400px;
-}
 
 .program-icon {
     width: 32px;
@@ -355,5 +377,22 @@ const handleSelectFile = async () => {
 
 .blocked-section {
     margin-bottom: 20px;
+}
+
+.alias-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+
+.alias-tag {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.no-alias {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
 }
 </style>

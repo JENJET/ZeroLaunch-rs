@@ -7,6 +7,7 @@ use reqwest_dav::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::warn;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PartialWebDAVConfig {
     pub host_url: Option<String>,
@@ -246,6 +247,46 @@ impl StorageClient for WebDAVStorageInner {
             });
         }
     }
+    // 要可以删除文件
+    async fn delete(&self, file_name: String) -> AppResult<()> {
+        let target_path = self.destination_dir.join(file_name);
+        let target_path = target_path
+            .to_str()
+            .expect_programming("Path should be valid UTF-8 - this is a programming error")
+            .to_string();
+        if let Some(client) = self.client.as_ref() {
+            // 尝试删除文件，忽略 404 错误（文件不存在）
+            match client.delete(&target_path).await {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    if let reqwest_dav::Error::Decode(decode_error) = e {
+                        if let reqwest_dav::DecodeError::Server(server_error) = decode_error {
+                            if server_error.response_code == 404 {
+                                // 文件不存在，视为成功
+                                Ok(())
+                            } else {
+                                Err(AppError::StorageError {
+                                    message: format!("{:?}", server_error),
+                                })
+                            }
+                        } else {
+                            Err(AppError::StorageError {
+                                message: format!("{:?}", decode_error),
+                            })
+                        }
+                    } else {
+                        Err(AppError::StorageError {
+                            message: format!("{:?}", e),
+                        })
+                    }
+                }
+            }
+        } else {
+            Err(AppError::StorageError {
+                message: "当前无客户端连接".to_string(),
+            })
+        }
+    }
     // 要可以获得当前文件的目标路径
     async fn get_target_dir_path(&self) -> String {
         self.destination_dir
@@ -272,6 +313,15 @@ impl StorageClient for WebDAVStorageInner {
             .is_err()
         {
             return false;
+        }
+
+        // 测试完成后删除测试文件
+        if self
+            .delete(TEST_CONFIG_FILE_NAME.to_string())
+            .await
+            .is_err()
+        {
+            warn!("Failed to delete test file: {}", TEST_CONFIG_FILE_NAME);
         }
 
         true
@@ -301,6 +351,11 @@ impl StorageClient for WebDAVStorage {
     async fn upload(&self, file_path: String, data: Vec<u8>) -> AppResult<()> {
         let inner = self.inner.read().await;
         inner.upload(file_path, data).await
+    }
+
+    async fn delete(&self, file_path: String) -> AppResult<()> {
+        let inner = self.inner.read().await;
+        inner.delete(file_path).await
     }
 
     async fn get_target_dir_path(&self) -> String {

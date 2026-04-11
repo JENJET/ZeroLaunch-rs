@@ -37,6 +37,16 @@
           </el-icon>
           {{ t('shortcut.reset_all') }}
         </el-button>
+        <el-button
+          type="danger"
+          :disabled="!is_editing"
+          @click="clearAllShortcuts"
+        >
+          <el-icon>
+            <Delete />
+          </el-icon>
+          {{ t('shortcut.clear_all') }}
+        </el-button>
       </div>
     </div>
 
@@ -75,6 +85,22 @@
                   >
                     <el-icon>
                       <RefreshRight />
+                    </el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip
+                  :content="t('shortcut.clear')"
+                  placement="top"
+                  effect="light"
+                >
+                  <el-button
+                    link
+                    class="clear-icon-btn"
+                    :disabled="!is_editing"
+                    @click="clearShortcut(item.key)"
+                  >
+                    <el-icon>
+                      <Delete />
                     </el-icon>
                   </el-button>
                 </el-tooltip>
@@ -142,7 +168,7 @@ import { useI18n } from 'vue-i18n'
 import {
     Search, ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
     InfoFilled, Edit, Close, Check, RefreshLeft,
-    RefreshRight, Files,
+    RefreshRight, Files, Delete,
 } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 const { t } = useI18n()
@@ -276,6 +302,50 @@ const resetAllShortcuts = async () => {
     }
 }
 
+// 清除单个快捷键
+const clearShortcut = (key: ShortcutKey) => {
+    dirty_shortcut_config.value[key] = {
+        key: '',
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+    }
+    ElMessage.success(t('shortcut.cleared'))
+}
+
+// 清除所有快捷键
+const clearAllShortcuts = async () => {
+    try {
+        await ElMessageBox.confirm(
+            t('shortcut.clear_all_confirm'),
+            t('shortcut.clear_confirm_title'),
+            {
+                confirmButtonText: t('shortcut.confirm_clear'),
+                cancelButtonText: t('shortcut.cancel'),
+                type: 'warning',
+            },
+        )
+        // 将所有快捷键设置为空
+        const clearedConfig = { ...dirty_shortcut_config.value }
+        Object.keys(clearedConfig).forEach(key => {
+            if (key !== 'double_click_ctrl') {
+                clearedConfig[key as ShortcutKey] = {
+                    key: '',
+                    ctrl: false,
+                    alt: false,
+                    shift: false,
+                    meta: false,
+                }
+            }
+        })
+        dirty_shortcut_config.value = clearedConfig
+        ElMessage.success(t('shortcut.all_cleared_success'))
+    } catch {
+        // 用户取消操作
+    }
+}
+
 const handleError = (error: string) => {
     ElMessage({
         showClose: true,
@@ -395,6 +465,22 @@ onUnmounted(async () => {
 }
 
 .reset-icon-btn:disabled {
+    color: var(--el-text-color-disabled);
+}
+
+.clear-icon-btn {
+    padding: 0;
+    height: auto;
+    font-size: 16px;
+    color: var(--el-text-color-secondary);
+    transition: color 0.2s;
+}
+
+.clear-icon-btn:hover:not(:disabled) {
+    color: var(--el-color-danger);
+}
+
+.clear-icon-btn:disabled {
     color: var(--el-text-color-disabled);
 }
 

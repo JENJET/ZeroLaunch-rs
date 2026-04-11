@@ -28,6 +28,8 @@ pub trait StorageClient: Send + Sync {
     async fn upload(&self, file_name: String, data: Vec<u8>) -> AppResult<()>;
     // 要可以下载文件
     async fn download(&self, file_name: String) -> AppResult<Option<Vec<u8>>>;
+    // 要可以删除文件
+    async fn delete(&self, file_name: String) -> AppResult<()>;
     // 要可以获得当前文件的目标路径
     async fn get_target_dir_path(&self) -> String;
     // 判断是否有效(true: 有效，false: 无效)
