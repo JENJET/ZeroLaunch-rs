@@ -161,17 +161,17 @@ impl ProgramLoaderConfigInner {
         vec![
             // 预置 Bing 搜索，占位符 {} 会在运行时被替换为用户输入
             (
-                "bing 搜索".to_string(),
+                "b".to_string(),
                 "https://www.bing.com/search?q={}".to_string(),
             ),
             // 预置 Google 搜索
             (
-                "google 搜索".to_string(),
+                "g".to_string(),
                 "https://www.google.com/search?q={}".to_string(),
             ),
             // 预置百度搜索
             (
-                "百度搜索".to_string(),
+                "bd".to_string(),
                 "https://www.baidu.com/s?wd={}".to_string(),
             ),
         ]
