@@ -89,7 +89,7 @@ export type AppConfig = {
 export function default_app_config(): AppConfig {
     return {
         search_bar_placeholder: '',
-        tips: '',
+        tips: '', // 将在 Home.vue 中动态设置为带版本号的默认值
         is_auto_start: false,
         is_silent_start: false,
         search_result_count: 4,
@@ -106,6 +106,13 @@ export function default_app_config(): AppConfig {
         log_level: 'info',
     } as AppConfig
 }
+
+// Fallback 默认值（当后端配置未加载时使用）
+// 注意：这些值应该与后端 Rust 代码中的默认值保持一致
+export const FALLBACK_DEFAULTS = {
+    search_bar_placeholder: 'Hello, ZeroLaunch!',
+    tips_base: 'ZeroLaunch-rs', // 基础文本，版本号会动态拼接
+} as const
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 

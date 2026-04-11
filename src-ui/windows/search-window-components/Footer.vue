@@ -15,7 +15,7 @@
         class="status-text"
         :style="{ color: uiConfig.footer_font_color, fontFamily: uiConfig.footer_font_family }"
       >{{
-        leftText || appConfig.tips }}</span>
+        leftText || displayTips }}</span>
     </div>
     <div class="footer-center" />
     <div class="footer-right">
@@ -32,6 +32,10 @@
 <script setup lang="ts">
 import type { ResolvedUIConfig, AppConfig } from '../../api/remote_config_types'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { computed } from 'vue'
+import { useRemoteConfigStore } from '../../stores/remote_config'
+import { storeToRefs } from 'pinia'
+import { FALLBACK_DEFAULTS } from '../../api/remote_config_types'
 
 const layoutConstants = {
   fontSizeRatio: 0.01,
@@ -43,6 +47,20 @@ const props = defineProps<{
   statusText: string;
   leftText?: string;
 }>()
+
+const configStore = useRemoteConfigStore()
+const { appVersion, defaultAppConfig } = storeToRefs(configStore)
+
+// 获取默认提示文字（优先从 store 获取，fallback 到常量）
+const defaultTips = computed(() => {
+  return defaultAppConfig.value?.tips 
+    || (appVersion.value ? `${FALLBACK_DEFAULTS.tips_base} v${appVersion.value}` : FALLBACK_DEFAULTS.tips_base)
+})
+
+// 实际显示的提示文字：优先使用配置的 tips，如果为空则使用默认值
+const displayTips = computed(() => {
+  return props.appConfig.tips || defaultTips.value
+})
 
 const startDrag = (e: MouseEvent) => {
   if (!props.appConfig.is_enable_drag_window) return

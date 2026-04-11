@@ -12,7 +12,7 @@
         <el-form-item :label="t('ui_config.custom_search_bar_placeholder')">
           <el-input
             v-model="config.app_config.search_bar_placeholder"
-            placeholder="Hello, ZeroLaunch!"
+            :placeholder="searchBarPlaceholder"
             @change="(val: string) => configStore.updateConfig({ app_config: { search_bar_placeholder: val } })"
           />
         </el-form-item>
@@ -20,7 +20,7 @@
         <el-form-item :label="t('ui_config.custom_footer_tips')">
           <el-input
             v-model="config.app_config.tips"
-            placeholder="ZeroLaunch-rs v0.4.0"
+            :placeholder="footerTipsPlaceholder"
             @change="(val: string) => configStore.updateConfig({ app_config: { tips: val } })"
           />
         </el-form-item>
@@ -258,15 +258,16 @@ import { useI18n } from 'vue-i18n'
 import { rgbaToHex } from '../../../utils/color'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRemoteConfigStore } from '../../../stores/remote_config'
 import { storeToRefs } from 'pinia'
 import type { UiThemeColorPalette, ThemeMode } from '../../../api/remote_config_types'
+import { FALLBACK_DEFAULTS } from '../../../api/remote_config_types'
 
 const { t } = useI18n()
 
 const configStore = useRemoteConfigStore()
-const { config } = storeToRefs(configStore)
+const { config, appVersion, defaultAppConfig } = storeToRefs(configStore)
 
 const activeColorTab = ref('light')
 
@@ -302,6 +303,17 @@ const updateColor = (mode: 'light_mode_colors' | 'dark_mode_colors', key: ColorK
     })
 }
 
+// 动态生成底部提示的 placeholder（从 store 获取默认值，fallback 到常量）
+const footerTipsPlaceholder = computed(() => {
+    return defaultAppConfig.value?.tips 
+        || (appVersion.value ? `${FALLBACK_DEFAULTS.tips_base} v${appVersion.value}` : FALLBACK_DEFAULTS.tips_base)
+})
+
+// 搜索框 placeholder（从 store 获取默认值，fallback 到常量）
+const searchBarPlaceholder = computed(() => {
+    return defaultAppConfig.value?.search_bar_placeholder || FALLBACK_DEFAULTS.search_bar_placeholder
+})
+
 const systemFonts = ref<string[]>([
     'Default', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New', 'SimSun', 'Microsoft YaHei',
 ])
@@ -320,6 +332,8 @@ const loadSystemFonts = async () => {
 
 onMounted(async () => {
     await loadSystemFonts()
+    // 初始化应用版本号和默认配置（如果尚未初始化）
+    await configStore.initAppVersion()
 })
 </script>
 

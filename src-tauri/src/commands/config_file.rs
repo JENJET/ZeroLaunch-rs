@@ -179,3 +179,10 @@ pub async fn command_check_validation<R: Runtime>(
 // ) -> Result<String, String> {
 //     get_onedrive_refresh_token(window).await
 // }
+
+/// 获取默认配置（用于前端显示 placeholder 等）
+#[tauri::command]
+pub fn command_get_default_config() -> Result<PartialRuntimeConfig, String> {
+    use crate::modules::config::config_manager::RuntimeConfig;
+    Ok(RuntimeConfig::new().to_partial())
+}

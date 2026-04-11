@@ -177,6 +177,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             command_save_remote_config,
             command_update_runtime_config,
+            command_get_default_config,
             load_program_icon,
             load_program_icon_by_index,
             get_program_count,

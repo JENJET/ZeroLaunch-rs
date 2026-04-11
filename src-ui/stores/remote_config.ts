@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { default_ui_config, default_app_config, default_shortcut_config, ProgramManagerConfig, ProgramLoaderConfig, PartialRemoteConfig, RemoteConfig, IconManagerConfig, ProgramRankerConfig, default_everything_config, default_refresh_scheduler_config, default_bookmark_loader_config } from '../api/remote_config_types'
+import { default_ui_config, default_app_config, default_shortcut_config, ProgramManagerConfig, ProgramLoaderConfig, PartialRemoteConfig, RemoteConfig, IconManagerConfig, ProgramRankerConfig, default_everything_config, default_refresh_scheduler_config, default_bookmark_loader_config, AppConfig } from '../api/remote_config_types'
 import { invoke } from '@tauri-apps/api/core'
+import { getVersion } from '@tauri-apps/api/app'
 
 export function mergeUiConfig(
     current: RemoteConfig['ui_config'],
@@ -240,6 +241,11 @@ function mergePartialProgramManagerConfig(
 
 export const useRemoteConfigStore = defineStore('config', {
     state: () => ({
+        appVersion: '', // 应用版本号
+        // 默认应用配置（从后端获取）
+        // 注意：初始为 null，initAppVersion() 异步加载后才有值
+        // 组件使用时需要提供 fallback 默认值，防止异步加载期间的空值
+        defaultAppConfig: null as AppConfig | null,
         config: {
             app_config: default_app_config(),
             ui_config: default_ui_config(),
@@ -327,6 +333,28 @@ export const useRemoteConfigStore = defineStore('config', {
                 await invoke('command_update_runtime_config', { partialConfig: partial })
             } catch (e) {
                 console.error('Failed to update runtime config', e)
+            }
+        },
+        async initAppVersion() {
+            // 初始化应用版本号和默认配置（全局只调用一次）
+            if (!this.appVersion) {
+                try {
+                    this.appVersion = await getVersion()
+                } catch (error) {
+                    console.error('Failed to get app version:', error)
+                }
+            }
+            
+            // 获取后端默认配置
+            if (!this.defaultAppConfig) {
+                try {
+                    const defaultConfig = await invoke('command_get_default_config') as any
+                    if (defaultConfig?.app_config) {
+                        this.defaultAppConfig = defaultConfig.app_config as AppConfig
+                    }
+                } catch (error) {
+                    console.error('Failed to get default config:', error)
+                }
             }
         },
     },
