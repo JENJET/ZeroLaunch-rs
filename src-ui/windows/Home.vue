@@ -133,7 +133,7 @@ import { mergeUiConfig } from '../stores/remote_config'
 const { t } = useI18n()
 
 // ✅ 搜索文本保留的时间阈值（毫秒）
-const SEARCH_TEXT_RETAIN_THRESHOLD_MS = 3000
+const SEARCH_TEXT_RETAIN_THRESHOLD_MS = 1000
 
 // State
 const app_config = ref<AppConfig>(default_app_config())

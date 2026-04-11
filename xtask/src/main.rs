@@ -448,7 +448,10 @@ fn move_installer_to_root(target_arch: TargetArch, version: &str, ai_mode: AiMod
 
                         fs::copy(&source_path, &dest_path)
                             .context(format!("无法将 {:?} 复制到 {:?}", source_path, dest_path))?;
-                        println_with_timestamp(&format!("✅ 已将安装包 {} 移动到根目录", dest_name.to_string_lossy()));
+                        println_with_timestamp(&format!(
+                            "✅ 已将安装包 {} 移动到根目录",
+                            dest_name.to_string_lossy()
+                        ));
                     }
                 }
             }
@@ -578,19 +581,22 @@ async fn create_portable_zip(exe_path: &Path, zip_name: &str, arch: TargetArch) 
     let zip_path = Path::new(zip_name);
     let file = fs::File::create(zip_path)?;
     let mut zip = ZipWriter::new(file);
-    
+
     // 使用当前本地时间作为文件时间戳
     let now = Local::now();
     let options = FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .last_modified_time(zip::DateTime::from_date_and_time(
-            now.year() as u16,
-            now.month() as u8,
-            now.day() as u8,
-            now.hour() as u8,
-            now.minute() as u8,
-            now.second() as u8,
-        ).unwrap_or_default());
+        .last_modified_time(
+            zip::DateTime::from_date_and_time(
+                now.year() as u16,
+                now.month() as u8,
+                now.day() as u8,
+                now.hour() as u8,
+                now.minute() as u8,
+                now.second() as u8,
+            )
+            .unwrap_or_default(),
+        );
 
     // 添加可执行文件
     let exe_name = exe_path.file_name().unwrap().to_str().unwrap();
@@ -699,7 +705,10 @@ fn clean_build_artifacts() -> Result<()> {
                                             "删除根目录的 {:?} 失败",
                                             no_ai_name
                                         ))?;
-                                        println_with_timestamp(&format!("🧹 已清理根目录下的安装包: {}", no_ai_name));
+                                        println_with_timestamp(&format!(
+                                            "🧹 已清理根目录下的安装包: {}",
+                                            no_ai_name
+                                        ));
                                     }
                                 }
                             }

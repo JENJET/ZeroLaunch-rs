@@ -42,19 +42,17 @@
 
             <div class="custom-icon-section">
                 <h3>
-                    {{ t('icon_management.custom_program_icon') }}
-                    <el-tooltip effect="dark" :content="t('icon_management.refresh_note')">
-                        <el-icon class="el-question-icon">
-                            <QuestionFilled />
-                        </el-icon>
-                    </el-tooltip>
+                    {{ config.icon_manager_config.enable_icon_cache ? t('icon_management.custom_program_icon') : t('icon_management.current_program_icon') }}
                 </h3>
 
-                <el-alert v-if="!config.icon_manager_config.enable_icon_cache"
-                    :title="t('icon_management.icon_cache_disabled_warning')" type="warning" show-icon :closable="false"
+                <el-alert
+                    :title="config.icon_manager_config.enable_icon_cache ? t('icon_management.icon_cache_enabled_note') : t('icon_management.icon_cache_disabled_note')"
+                    type="info"
+                    show-icon
+                    :closable="false"
                     style="margin-bottom: 16px;" />
 
-                <div v-else class="table-container">
+                <div class="table-container">
                     <div class="search-bar-row">
                         <el-input v-model="searchKeyword" :placeholder="t('icon_management.search_placeholder')"
                             prefix-icon="Search" clearable :disabled="showAllMode" @input="handleSearch" class="search-input" />
@@ -94,14 +92,14 @@
                             </template>
                         </el-table-column>
 
-                        <el-table-column :label="t('icon_management.actions')" width="180" fixed="right">
+                        <el-table-column v-if="config.icon_manager_config.enable_icon_cache" :label="t('icon_management.actions')" width="180" fixed="right">
                             <template #default="scope">
                                 <div class="action-buttons">
                                     <el-button size="small" type="primary" @click="handleChangeIcon(scope.row)">
                                         {{ t('icon_management.change_icon') }}
                                     </el-button>
                                     <el-button 
-                                        v-if="!scope.row.is_builtin && config.icon_manager_config.enable_icon_cache" 
+                                        v-if="config.icon_manager_config.enable_icon_cache" 
                                         size="small" 
                                         type="danger" 
                                         @click="handleResetCache(scope.row)"

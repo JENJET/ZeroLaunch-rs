@@ -528,6 +528,8 @@ fn register_icon_path(app: &mut App) {
     let icons_to_register = [
         ("tray_icon", "32x32.png"),
         ("tray_icon_white", "32x32-white.png"),
+        ("window_icon", "128x128@2x.png"),
+        ("window_icon_white", "128x128@2x-white.png"),
         ("web_pages", "web_pages.png"),
         ("tips", "tips.png"),
         ("terminal", "terminal.png"),
@@ -574,18 +576,64 @@ fn init_setting_window(app: tauri::AppHandle) {
             saved_x, saved_y, saved_width, saved_height
         );
 
-        let setting_window = Arc::new(
-            tauri::WebviewWindowBuilder::new(
-                &app,
-                "setting_window",
-                WebviewUrl::App("/setting_window".into()),
+        // 根据主题选择窗口图标（使用高分辨率 128x128）
+        // Dark模式 → 深色任务栏 → 需要白色图标
+        // Light模式 → 浅色任务栏 → 需要深色图标
+        let window_icon_result: Option<tauri::image::Image<'_>> = {
+            let ui_config = config.get_ui_config();
+            let tray_theme_mode = ui_config.get_tray_theme_mode();
+            let use_white_icon = match tray_theme_mode {
+                crate::modules::config::ui_config::ThemeMode::Dark => true,
+                crate::modules::config::ui_config::ThemeMode::Light => false,
+                crate::modules::config::ui_config::ThemeMode::System => {
+                    // 在异步上下文中，尝试从主窗口获取主题
+                    if let Some(main_window) = app.get_webview_window("main") {
+                        match main_window.theme() {
+                            Ok(theme) => theme == tauri::Theme::Dark,
+                            Err(_) => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            let icon_key = if use_white_icon {
+                "window_icon_white"
+            } else {
+                "window_icon"
+            };
+
+            APP_PIC_PATH
+                .get(icon_key)
+                .and_then(|path_entry| tauri::image::Image::from_path(path_entry.value()).ok())
+        };
+
+        let window_builder = tauri::WebviewWindowBuilder::new(
+            &app,
+            "setting_window",
+            WebviewUrl::App("/setting_window".into()),
+        )
+        .title("设置")
+        .visible(false)
+        .drag_and_drop(false);
+
+        // 如果有图标，则在 builder 中设置
+        let setting_window = if let Some(icon) = window_icon_result {
+            Arc::new(
+                window_builder
+                    .icon(icon)
+                    .expect_programming("无法设置窗口图标")
+                    .build()
+                    .expect_programming("无法创建设置窗口"),
             )
-            .title("设置")
-            .visible(false)
-            .drag_and_drop(false)
-            .build()
-            .expect_programming("无法创建设置窗口"),
-        );
+        } else {
+            Arc::new(
+                window_builder
+                    .build()
+                    .expect_programming("无法创建设置窗口"),
+            )
+        };
 
         // 获取主监视器信息以计算居中位置
         let mut should_center = true;
