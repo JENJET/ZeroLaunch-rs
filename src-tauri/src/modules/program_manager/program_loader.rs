@@ -279,6 +279,17 @@ impl ProgramLoaderInner {
         self.enabled_builtin_commands = config.get_enabled_builtin_commands();
         self.builtin_command_keywords = config.get_builtin_command_keywords();
     }
+
+    /// 更新程序别名（不重新加载其他配置）
+    pub fn update_program_alias(&mut self, alias_map: &DashMap<String, Vec<String>>) {
+        // 清空现有别名
+        self.program_alias.clear();
+        // 插入新别名
+        for ref_multi in alias_map.iter() {
+            let (key, value) = ref_multi.pair();
+            self.program_alias.insert(key.clone(), value.clone());
+        }
+    }
     /// 设置是否生成程序embedding
     pub fn set_compute_embeddings(&mut self, enabled: bool) {
         self.compute_embeddings = enabled;
@@ -1443,6 +1454,16 @@ impl ProgramLoader {
     /// 从配置文件中加载配置
     pub fn load_from_config(&self, config: &ProgramLoaderConfig) {
         self.inner.write().load_from_config(config);
+    }
+
+    /// 更新程序别名（不重新加载其他配置）
+    pub fn update_program_alias(&self, alias_map: &DashMap<String, Vec<String>>) {
+        self.inner.write().update_program_alias(alias_map);
+    }
+
+    /// 获取当前别名数量
+    pub fn get_program_alias_count(&self) -> usize {
+        self.inner.read().program_alias.len()
     }
 
     /// 设置书签加载器

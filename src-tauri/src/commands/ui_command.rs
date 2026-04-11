@@ -248,6 +248,12 @@ pub fn show_setting_window() -> Result<(), String> {
     if let Err(e) = setting_window.show() {
         return Err(format!("Failed to show setting window: {:?}", e));
     }
+
+    // 发送窗口显示事件，通知前端重置加载状态
+    if let Err(e) = setting_window.emit("window-shown", ()) {
+        tracing::warn!("Failed to emit window-shown event: {:?}", e);
+    }
+
     if let Err(e) = setting_window.set_focus() {
         return Err(format!("Failed to set focus on setting window: {:?}", e));
     }

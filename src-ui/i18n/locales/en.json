@@ -175,7 +175,7 @@
     "icon_cache_disabled_warning": "This feature is only available when icon cache is enabled",
     "icon_cache_disabled_note": "Enable icon cache to manage individual program icons here",
     "icon_cache_enabled_note": "After updating an icon, please refresh the program database manually. The new icon will appear correctly after a successful refresh.",
-    "search_placeholder": "Search program name...",
+    "search_placeholder": "Search by program name or alias...",
     "show_all": "Show All",
     "back_to_search": "Back to Search",
     "icon": "Icon",

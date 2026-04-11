@@ -176,6 +176,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             command_save_remote_config,
+            command_update_runtime_config,
             load_program_icon,
             load_program_icon_by_index,
             get_program_count,
@@ -768,10 +769,26 @@ fn init_setting_window(app: tauri::AppHandle) {
                         position.x, position.y, size.width, size.height
                     );
 
-                    // 异步保存配置到文件
+                    info!(
+                        "Saved setting window state to memory: x={}, y={}, width={}, height={}",
+                        position.x, position.y, size.width, size.height
+                    );
+
+                    // 异步保存配置到文件（只更新窗口状态字段）
                     tauri::async_runtime::spawn(async move {
-                        save_config_to_file(false).await;
-                        info!("Setting window state saved to file");
+                        save_setting_window_state_only().await;
+
+                        // 检查是否有别名配置被修改过，如果有则触发刷新
+                        let state = ServiceLocator::get_state();
+                        if state.is_alias_config_modified() {
+                            // 触发程序刷新，重新计算所有程序的搜索关键词
+                            let refresh_scheduler = state.get_refresh_scheduler();
+                            refresh_scheduler.trigger_refresh();
+                            info!("✅ 检测到别名配置修改，已触发程序刷新以更新搜索关键词");
+
+                            // 重置标志位
+                            state.reset_alias_config_modified();
+                        }
                     });
                 }
 
@@ -1007,6 +1024,56 @@ pub async fn save_config_to_file(is_update_app: bool) {
         let state = ServiceLocator::get_state();
         state.get_refresh_scheduler().trigger_refresh();
     }
+}
+
+/// 仅保存设置窗口状态到文件（不保存其他配置）
+pub async fn save_setting_window_state_only() {
+    use tracing::info;
+
+    info!("开始保存设置窗口状态（仅窗口信息）");
+
+    let state = ServiceLocator::get_state();
+    let runtime_config = state.get_runtime_config();
+    let storage_manager = state.get_storage_manager();
+
+    // 1. 从远程存储下载现有配置
+    let existing_config_str = storage_manager
+        .download_file_str(REMOTE_CONFIG_NAME.to_string())
+        .await
+        .unwrap_or_else(|| {
+            info!("远程配置文件不存在，使用默认配置");
+            "{}".to_string()
+        });
+
+    // 2. 解析现有配置
+    let mut existing_config: serde_json::Value = serde_json::from_str(&existing_config_str)
+        .unwrap_or_else(|e| {
+            warn!("解析远程配置失败: {}, 使用空配置", e);
+            serde_json::json!({})
+        });
+
+    // 3. 获取当前内存中的完整配置
+    let current_partial = runtime_config.to_partial();
+
+    // 4. 只更新 setting_window_state 字段
+    if let Some(setting_window_state) = current_partial.setting_window_state {
+        if let Some(obj) = existing_config.as_object_mut() {
+            obj.insert(
+                "setting_window_state".to_string(),
+                serde_json::to_value(setting_window_state).unwrap_or_default(),
+            );
+        }
+    }
+
+    // 5. 序列化并上传
+    let updated_config_str =
+        serde_json::to_string_pretty(&existing_config).expect("序列化配置失败");
+
+    storage_manager
+        .upload_file_str(REMOTE_CONFIG_NAME.to_string(), updated_config_str)
+        .await;
+
+    info!("设置窗口状态已保存到文件");
 }
 
 /// 处理自动开机的逻辑

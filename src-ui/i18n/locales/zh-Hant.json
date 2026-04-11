@@ -175,7 +175,7 @@
     "icon_cache_disabled_warning": "此功能僅在啟用圖示快取時可用",
     "icon_cache_disabled_note": "啟用圖示快取後，可以在此管理各個程式的圖示",
     "icon_cache_enabled_note": "圖示更新完成後，請手動刷新程式資料庫。刷新成功後，新圖示才會在介面中正確顯示。",
-    "search_placeholder": "輸入程式名稱搜尋...",
+    "search_placeholder": "輸入程式名稱或別名搜尋...",
     "show_all": "顯示全部",
     "back_to_search": "返回搜尋",
     "icon": "圖示",

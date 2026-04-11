@@ -15,7 +15,7 @@ use tauri::Manager;
 use tauri::Runtime;
 use tracing::error;
 
-/// 更新程序管理器的路径配置
+/// 更新程序管理器的路径配置（同时保存到文件）
 #[tauri::command]
 pub async fn command_save_remote_config<R: Runtime>(
     _app: tauri::AppHandle<R>,
@@ -37,6 +37,43 @@ pub async fn command_save_remote_config<R: Runtime>(
 
     save_config_to_file(true).await;
     info!("💾 远程配置保存完成");
+
+    Ok(())
+}
+
+/// 仅更新运行时配置（不保存到文件）
+#[tauri::command]
+pub async fn command_update_runtime_config<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    state: tauri::State<'_, Arc<AppState>>,
+    partial_config: PartialRuntimeConfig,
+) -> Result<(), String> {
+    use tracing::info;
+
+    info!("🔄 开始更新运行时配置（不保存文件）");
+    println!("收到的运行时配置: {:?}", partial_config);
+
+    // 先提取别名数据（在 partial_config 被 move 之前）
+    let alias_map = partial_config
+        .program_manager_config
+        .as_ref()
+        .and_then(|pm| pm.loader.as_ref())
+        .and_then(|loader| loader.program_alias.clone());
+
+    let runtime_config = state.get_runtime_config();
+    runtime_config.update(partial_config);
+    info!("✅ 运行时配置已更新（仅内存）");
+
+    // 如果更新了 program_alias，立即同步到 program_loader（不触发刷新）
+    if let Some(alias_map) = alias_map {
+        let program_manager = state.get_program_manager();
+        program_manager.update_program_alias(&alias_map).await;
+        info!("✅ 程序别名已同步到 program_loader 内存");
+
+        // 标记别名配置已被修改
+        state.mark_alias_config_modified();
+        info!("📝 别名配置修改标志已设置");
+    }
 
     Ok(())
 }

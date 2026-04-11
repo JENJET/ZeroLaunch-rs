@@ -31,14 +31,14 @@
                     </el-tooltip>
                 </el-form-item>
 
-                <el-form-item>
+                <el-form-item style="margin-bottom: 0;">
                     <el-button type="primary" @click="openIconCacheDir">
                         {{ t('icon_management.open_icon_cache_folder') }}
                     </el-button>
                 </el-form-item>
             </el-form>
 
-            <el-divider />
+            <div style="border-top: 1px solid #ebeef5; margin: 24px 0 0px;"></div>
 
             <div class="custom-icon-section">
                 <h3>
@@ -236,11 +236,9 @@ handleSearch()
 }
 
 .custom-icon-section {
-    margin-top: 20px;
-    flex: 1;
+    margin-top: 4px;
     display: flex;
     flex-direction: column;
-    min-height: 400px;
 }
 
 .table-container {

@@ -320,5 +320,14 @@ export const useRemoteConfigStore = defineStore('config', {
                 console.error('Failed to sync config', e)
             }
         },
+        async updateRuntimeConfig(partial: PartialRemoteConfig) {
+            // 只更新内存中的运行时配置，不保存到文件
+            if (Object.keys(partial).length === 0) return
+            try {
+                await invoke('command_update_runtime_config', { partialConfig: partial })
+            } catch (e) {
+                console.error('Failed to update runtime config', e)
+            }
+        },
     },
 })

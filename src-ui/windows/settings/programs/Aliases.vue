@@ -10,22 +10,15 @@
           :placeholder="t('icon_management.search_placeholder')"
           :prefix-icon="Search"
           clearable
-          :disabled="showAllMode"
           @input="handleSearch"
           class="search-input"
         />
-        <el-button
-          :type="showAllMode ? 'primary' : 'default'"
-          @click="toggleShowAll"
-        >
-          {{ showAllMode ? t('icon_management.back_to_search') : t('icon_management.show_all') }}
-        </el-button>
       </div>
 
       <div class="table-wrapper">
         <el-table
           v-loading="loading"
-          :data="programList"
+          :data="sortedProgramList"
           :style="{ width: '100%' }"
           height="100%"
         >
@@ -66,10 +59,12 @@
             <template #default="{ row }">
               <div class="alias-tags">
                 <el-tag
-                  v-for="alias in getAliases(row.path)"
-                  :key="alias"
+                  v-for="(alias, index) in getAliases(row.path)"
+                  :key="index"
                   size="small"
                   class="alias-tag"
+                  closable
+                  @close="removeAliasDirectly(row, index)"
                 >
                   {{ alias }}
                 </el-tag>
@@ -101,10 +96,11 @@
       v-model="dialogVisible"
       :title="t('settings.edit_program_alias', { name: editingProgram.name })"
       width="500"
+      @close="closeDialog"
     >
       <div style="display: flex; flex-direction: column; gap: 10px;">
         <div
-          v-for="(alias, index) in getAliases(editingProgram.path)"
+          v-for="(alias, index) in dialogAliases"
           :key="index"
           style="display: flex; align-items: center; gap: 10px;"
         >
@@ -132,7 +128,7 @@
           </el-button>
           <el-button
             type="primary"
-            @click="dialogVisible = false"
+            @click="closeDialog"
           >
             {{ t('settings.close') }}
           </el-button>
@@ -143,7 +139,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRemoteConfigStore } from '../../../stores/remote_config'
 import { storeToRefs } from 'pinia'
@@ -151,24 +147,20 @@ import { ElButton, ElTag, ElInput, ElTable, ElTableColumn, ElDialog } from 'elem
 import { Search } from '@element-plus/icons-vue'
 import type { ProgramDisplayInfo } from '../../../api/program'
 import { useProgramSearch } from '../../../composables/useProgramSearch'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
+
+// 组件名称，用于 keep-alive 缓存
+defineOptions({
+    name: 'Aliases'
+})
 
 const { t } = useI18n()
 const configStore = useRemoteConfigStore()
 const { config } = storeToRefs(configStore)
 
-const {
-    searchKeyword,
-    loading,
-    programList,
-    showAllMode,
-    handleSearch,
-    toggleShowAll,
-    getIconUrl,
-    isIconLoading
-} = useProgramSearch()
-
 const dialogVisible = ref(false)
 const editingProgram = ref<ProgramDisplayInfo | null>(null)
+const dialogAliases = ref<string[]>([]) // 临时编辑状态，关闭对话框时才保存
 
 const program_alias = computed({
     get: () => config.value.program_manager_config.loader.program_alias,
@@ -185,55 +177,124 @@ const getAliases = (path: string) => {
     return program_alias.value[path] || []
 }
 
-const openEditDialog = (row: ProgramDisplayInfo) => {
-    editingProgram.value = row
-    // Ensure entry exists in map
-    if (!program_alias.value[row.path]) {
-        const newAliasMap = { ...program_alias.value }
-        newAliasMap[row.path] = []
-        program_alias.value = newAliasMap
-    }
-    dialogVisible.value = true
-}
+const {
+    searchKeyword,
+    loading,
+    filteredProgramList,
+    showAllMode,
+    handleSearch,
+    toggleShowAll,
+    resetLoadedState,
+    getIconUrl,
+    isIconLoading
+} = useProgramSearch({
+    getAliasFn: getAliases
+})
 
-const updateAliasInDialog = (index: number, newValue: string) => {
-    if (!editingProgram.value) return
-    const path = editingProgram.value.path
-    const aliases = [...(program_alias.value[path] || [])]
-    aliases[index] = newValue
-    
-    const newAliasMap = { ...program_alias.value }
-    newAliasMap[path] = aliases
-    program_alias.value = newAliasMap
-}
+// 监听窗口显示事件，用于在窗口重新显示时重置加载状态
+let unlistenWindowShown: UnlistenFn | null = null
 
-const removeAliasInDialog = (index: number) => {
-    if (!editingProgram.value) return
-    const path = editingProgram.value.path
+// 根据是否设置别名排序
+const sortedProgramList = computed(() => {
+    return [...filteredProgramList.value].sort((a, b) => {
+        const aHasAlias = (program_alias.value[a.path] || []).length > 0
+        const bHasAlias = (program_alias.value[b.path] || []).length > 0
+        
+        // 有别名排在前面
+        if (aHasAlias && !bHasAlias) return -1
+        if (!aHasAlias && bHasAlias) return 1
+        return 0
+    })
+})
+
+const removeAliasDirectly = async (row: ProgramDisplayInfo, index: number) => {
+    const path = row.path
     const aliases = [...(program_alias.value[path] || [])]
     aliases.splice(index, 1)
     
     const newAliasMap = { ...program_alias.value }
-    // If empty, maybe we should keep the key or delete it? 
-    // Keeping it is safer for now, or we can clean up empty entries.
-    // Let's keep it simple.
-    newAliasMap[path] = aliases
+    if (aliases.length === 0) {
+        delete newAliasMap[path] // 没有别名时删除键
+    } else {
+        newAliasMap[path] = aliases
+    }
     program_alias.value = newAliasMap
+    
+    // 同步到后端内存
+    await configStore.updateRuntimeConfig({
+        program_manager_config: {
+            loader: { program_alias: newAliasMap }
+        }
+    })
+}
+
+const openEditDialog = (row: ProgramDisplayInfo) => {
+    editingProgram.value = row
+    // 复制当前别名到临时状态，不立即修改配置
+    dialogAliases.value = [...(program_alias.value[row.path] || [])]
+    dialogVisible.value = true
+}
+
+const updateAliasInDialog = (index: number, newValue: string) => {
+    dialogAliases.value[index] = newValue
+}
+
+const removeAliasInDialog = (index: number) => {
+    dialogAliases.value.splice(index, 1)
 }
 
 const addAliasInDialog = () => {
-    if (!editingProgram.value) return
-    const path = editingProgram.value.path
-    const aliases = [...(program_alias.value[path] || [])]
-    aliases.push('')
-    
-    const newAliasMap = { ...program_alias.value }
-    newAliasMap[path] = aliases
-    program_alias.value = newAliasMap
+    dialogAliases.value.push('')
 }
 
-// Initial load
-handleSearch()
+// 清理空别名并关闭对话框
+const closeDialog = async () => {
+    if (!editingProgram.value) {
+        dialogVisible.value = false
+        return
+    }
+    const path = editingProgram.value.path
+    // 过滤掉空字符串别名
+    const filteredAliases = dialogAliases.value.filter(a => a.trim() !== '')
+    
+    const newAliasMap = { ...program_alias.value }
+    if (filteredAliases.length === 0) {
+        delete newAliasMap[path] // 没有别名时删除键
+    } else {
+        newAliasMap[path] = filteredAliases
+    }
+    program_alias.value = newAliasMap
+    dialogVisible.value = false
+    
+    // 只更新后端内存，不保存到文件
+    await configStore.updateRuntimeConfig({
+        program_manager_config: {
+            loader: { program_alias: newAliasMap }
+        }
+    })
+}
+
+// 别名管理界面默认加载所有程序，以便正确排序和显示
+onMounted(async () => {
+    showAllMode.value = true
+    handleSearch()
+    
+    // 监听窗口显示事件
+    unlistenWindowShown = await listen('window-shown', () => {
+        // 窗口重新显示时，重置加载状态并重新加载
+        resetLoadedState()
+        showAllMode.value = true
+        handleSearch()
+    })
+})
+
+// 页面关闭时清理事件监听
+onUnmounted(() => {
+    if (unlistenWindowShown) {
+        unlistenWindowShown()
+        unlistenWindowShown = null
+    }
+})
 </script>
 
 <style scoped>
@@ -321,5 +382,6 @@ handleSearch()
 
 .alias-tag {
     margin-right: 4px;
+    cursor: pointer;
 }
 </style>

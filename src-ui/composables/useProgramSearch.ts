@@ -1,14 +1,20 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { ProgramDisplayInfo } from '../api/program'
 
-export function useProgramSearch() {
+export interface UseProgramSearchOptions {
+    getAliasFn?: (path: string) => string[]
+}
+
+export function useProgramSearch(options?: UseProgramSearchOptions) {
     const searchKeyword = ref('')
     const loading = ref(false)
     const programList = ref<ProgramDisplayInfo[]>([])
     const iconUrls = ref(new Map<string, string>())
     const iconLoading = ref(new Set<string>()) // 跟踪正在加载的图标
     const showAllMode = ref(false)
+    const allPrograms = ref<ProgramDisplayInfo[]>([]) // 存储全量数据用于前端过滤
+    const isLoaded = ref(false) // 标记是否已加载过全量数据
     let searchTimeout: number | undefined
 
     const loadIcon = async (row: ProgramDisplayInfo) => {
@@ -40,18 +46,55 @@ export function useProgramSearch() {
         }
     }
 
+    // 前端搜索过滤函数
+    const filterPrograms = (keyword: string, programs: ProgramDisplayInfo[]): ProgramDisplayInfo[] => {
+        if (!keyword.trim()) return programs
+        const lowerKeyword = keyword.toLowerCase()
+        return programs.filter(p => {
+            const nameMatch = p.name.toLowerCase().includes(lowerKeyword)
+            const pathMatch = p.path.toLowerCase().includes(lowerKeyword)
+            // 如果提供了别名搜索函数，也搜索别名
+            const aliasMatch = options?.getAliasFn
+                ? (options.getAliasFn(p.path) || []).some(a => a.toLowerCase().includes(lowerKeyword))
+                : false
+            return nameMatch || pathMatch || aliasMatch
+        })
+    }
+
+    // 计算属性：显示的程序列表（支持前端过滤）
+    const filteredProgramList = computed(() => {
+        if (!showAllMode.value || !allPrograms.value.length) {
+            return programList.value
+        }
+        return filterPrograms(searchKeyword.value, allPrograms.value)
+    })
+
     const handleSearch = () => {
+        // 在"显示全部"模式下，如果已加载过全量数据，直接使用前端过滤
+        if (showAllMode.value && isLoaded.value) {
+            return // 无需调用后端，直接使用缓存数据
+        }
+        
         if (searchTimeout) clearTimeout(searchTimeout)
         searchTimeout = window.setTimeout(async () => {
             loading.value = true
             try {
                 const results = await invoke<ProgramDisplayInfo[]>('command_search_programs_lightweight', {
-                    keyword: searchKeyword.value,
+                    keyword: showAllMode.value ? '' : searchKeyword.value, // 显示全部时不传关键词给后端
                     loadAll: showAllMode.value
                 })
                 programList.value = results
-                // Load icons for results
-                results.forEach(loadIcon)
+                
+                // 在"显示全部"模式下，缓存全量数据到本地
+                if (showAllMode.value) {
+                    allPrograms.value = results
+                    isLoaded.value = true // 标记已加载
+                    results.forEach(loadIcon)
+                } else {
+                    allPrograms.value = []
+                    isLoaded.value = false // 普通模式不标记
+                    results.forEach(loadIcon)
+                }
             } catch (e) {
                 console.error('Search failed', e)
             } finally {
@@ -62,7 +105,27 @@ export function useProgramSearch() {
 
     const toggleShowAll = () => {
         showAllMode.value = !showAllMode.value
-        handleSearch()
+        if (showAllMode.value) {
+            // 切换到"显示全部"时，如果还未加载过，则加载
+            if (!isLoaded.value) {
+                searchKeyword.value = ''
+                handleSearch()
+            }
+        } else {
+            // 切换回"普通模式"时，清空状态
+            searchKeyword.value = ''
+            isLoaded.value = false
+            allPrograms.value = []
+            handleSearch()
+        }
+    }
+
+    // 重置加载状态（用于页面关闭时调用）
+    const resetLoadedState = () => {
+        isLoaded.value = false
+        allPrograms.value = []
+        programList.value = []
+        searchKeyword.value = ''
     }
 
     const getIconUrl = (icon_request_json: string) => {
@@ -96,9 +159,11 @@ export function useProgramSearch() {
         searchKeyword,
         loading,
         programList,
+        filteredProgramList, // 新增：支持前端过滤的列表
         showAllMode,
         handleSearch,
         toggleShowAll,
+        resetLoadedState, // 新增：重置加载状态
         getIconUrl,
         isIconLoading,
         refreshIcon

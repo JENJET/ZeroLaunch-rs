@@ -53,6 +53,8 @@ pub struct AppState {
     icon_manager: RwLock<Option<Arc<IconManager>>>,
     /// 书签加载器
     bookmark_loader: RwLock<Option<Arc<BookmarkLoader>>>,
+    /// 别名配置是否被修改过（用于判断是否需要刷新搜索关键词）
+    alias_config_modified: RwLock<bool>,
 }
 
 impl Default for AppState {
@@ -83,6 +85,7 @@ impl AppState {
             everything_manager: Arc::new(EverythingManager::new()),
             icon_manager: RwLock::new(None),
             bookmark_loader: RwLock::new(None),
+            alias_config_modified: RwLock::new(false),
         }
     }
 
@@ -286,6 +289,23 @@ impl AppState {
     pub fn set_bookmark_loader(&self, bookmark_loader: Arc<BookmarkLoader>) {
         *self.bookmark_loader.write() = Some(bookmark_loader);
     }
+
+    // region: Alias Config Modified 标志位
+    /// 标记别名配置已被修改
+    pub fn mark_alias_config_modified(&self) {
+        *self.alias_config_modified.write() = true;
+    }
+
+    /// 检查别名配置是否被修改过
+    pub fn is_alias_config_modified(&self) -> bool {
+        *self.alias_config_modified.read()
+    }
+
+    /// 重置别名配置修改标志
+    pub fn reset_alias_config_modified(&self) {
+        *self.alias_config_modified.write() = false;
+    }
+    // endregion
 }
 
 // Custom Debug implementation for AppState

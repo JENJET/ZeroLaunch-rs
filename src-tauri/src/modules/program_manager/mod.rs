@@ -539,6 +539,16 @@ impl ProgramManager {
     pub async fn get_program_loader_loading_time(&self) -> f64 {
         self.program_loader.get_loading_time()
     }
+
+    /// 更新程序别名（仅内存）
+    pub async fn update_program_alias(&self, alias_map: &DashMap<String, Vec<String>>) {
+        self.program_loader.update_program_alias(alias_map);
+    }
+
+    /// 获取当前别名数量
+    pub async fn get_program_alias_count(&self) -> usize {
+        self.program_loader.get_program_alias_count()
+    }
     /// 获得搜索关键字
     pub async fn get_search_keywords(&self, show_name: &str) -> Vec<String> {
         self.program_loader.convert_search_keywords(show_name)

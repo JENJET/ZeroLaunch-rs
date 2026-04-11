@@ -2,7 +2,7 @@ use crate::utils::generate_current_date;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 /// 部分程序排序器配置（用于运行时数据导出）
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -12,7 +12,7 @@ pub struct PartialProgramRankerConfig {
     pub last_update_data: Option<String>,
     pub latest_launch_time: Option<DashMap<String, i64>>,
     /// 查询亲和度存储: 查询词 -> { "launch_method.get_text()" -> QueryAffinityData }
-    pub query_affinity_store: Option<HashMap<String, DashMap<String, QueryAffinityData>>>,
+    pub query_affinity_store: Option<BTreeMap<String, DashMap<String, QueryAffinityData>>>,
     /// 历史总分权重系数 (默认1.0)
     pub history_weight: Option<f64>,
     /// 近期习惯权重系数 (7天内,默认2.0)
@@ -77,7 +77,7 @@ pub struct ProgramRankerConfigInner {
     pub latest_launch_time: DashMap<String, i64>,
     /// 查询亲和度存储
     #[serde(default = "ProgramRankerConfigInner::default_query_affinity_store")]
-    pub query_affinity_store: HashMap<String, DashMap<String, QueryAffinityData>>,
+    pub query_affinity_store: BTreeMap<String, DashMap<String, QueryAffinityData>>,
     /// 历史总分权重系数
     #[serde(default = "ProgramRankerConfigInner::default_history_weight")]
     pub history_weight: f64,
@@ -144,8 +144,8 @@ impl ProgramRankerConfigInner {
     }
 
     pub(crate) fn default_query_affinity_store(
-    ) -> HashMap<String, DashMap<String, QueryAffinityData>> {
-        HashMap::new()
+    ) -> BTreeMap<String, DashMap<String, QueryAffinityData>> {
+        BTreeMap::new()
     }
 
     pub(crate) fn default_history_weight() -> f64 {
@@ -277,7 +277,7 @@ impl ProgramRankerConfig {
         self.inner.read().latest_launch_time.clone()
     }
 
-    pub fn get_query_affinity_store(&self) -> HashMap<String, DashMap<String, QueryAffinityData>> {
+    pub fn get_query_affinity_store(&self) -> BTreeMap<String, DashMap<String, QueryAffinityData>> {
         self.inner.read().query_affinity_store.clone()
     }
 

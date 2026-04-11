@@ -8,8 +8,7 @@ use crate::utils::is_date_current;
 use crate::utils::{generate_current_date, get_current_time};
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use std::collections::BTreeSet;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tracing::debug;
 
 /// 程序排序器内部实现
@@ -103,10 +102,10 @@ impl ProgramRankerInner {
         self.update_launch_info();
 
         // 导出查询亲和度数据
-        let query_affinity_store: HashMap<String, DashMap<String, QueryAffinityData>> = self
+        let query_affinity_store: BTreeMap<String, DashMap<String, QueryAffinityData>> = self
             .query_affinity_map
             .iter()
-            .fold(HashMap::new(), |mut acc, entry| {
+            .fold(BTreeMap::new(), |mut acc, entry| {
                 let (query, method_text) = entry.key();
                 let data = entry.value();
                 acc.entry(query.clone())

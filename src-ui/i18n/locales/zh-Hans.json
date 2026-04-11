@@ -175,7 +175,7 @@
     "icon_cache_disabled_warning": "此功能仅在开启图标缓存时可用",
     "icon_cache_disabled_note": "开启图标缓存后，可以在此管理各个程序的图标",
     "icon_cache_enabled_note": "图标更新完成后，请手动刷新程序数据库。刷新成功后，新图标才会在界面中正确显示。",
-    "search_placeholder": "输入程序名称搜索...",
+    "search_placeholder": "输入程序名称或别名搜索...",
     "show_all": "显示全部",
     "back_to_search": "返回搜索",
     "icon": "图标",
