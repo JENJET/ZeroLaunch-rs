@@ -164,6 +164,16 @@ impl ProgramLoaderConfigInner {
                 "bing 搜索".to_string(),
                 "https://www.bing.com/search?q={}".to_string(),
             ),
+            // 预置 Google 搜索
+            (
+                "google 搜索".to_string(),
+                "https://www.google.com/search?q={}".to_string(),
+            ),
+            // 预置百度搜索
+            (
+                "百度搜索".to_string(),
+                "https://www.baidu.com/s?wd={}".to_string(),
+            ),
         ]
     }
 
