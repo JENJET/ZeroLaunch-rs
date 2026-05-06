@@ -14,6 +14,7 @@ use crate::program_manager::semantic_manager::SemanticManager;
 /// 这个类用于加载电脑上程序，通过扫描路径或使用系统调用接口
 use crate::program_manager::Program;
 use crate::utils::defer::defer;
+use crate::utils::i18n::t;
 use crate::utils::notify::notify;
 use crate::utils::windows::get_u16_vec;
 use core::time::Duration;
@@ -763,15 +764,16 @@ impl ProgramLoaderInner {
                 continue;
             }
 
-            let show_name = key;
+            // 使用翻译函数获取显示名称，如果没有翻译则使用 key 本身
+            let show_name = t(key);
             // 不判断是不是被禁止的
-            let check_name = "[命令]".to_string() + show_name;
+            let check_name = "[命令]".to_string() + &show_name;
             if self.check_program_is_exist(&check_name) {
                 continue;
             }
 
             let unique_name = show_name.to_lowercase();
-            let alias_names = self.convert_search_keywords(show_name);
+            let alias_names = self.convert_search_keywords(&show_name);
             let launch_method = LaunchMethod::Command(command.clone());
 
             // 尝试解析出可执行文件路径以用于图标提取
@@ -826,7 +828,6 @@ impl ProgramLoaderInner {
     /// 加载内置命令
     fn load_builtin_commands(&mut self) -> Vec<Arc<Program>> {
         use crate::program_manager::builtin_commands;
-        use crate::utils::i18n::t;
         let mut result = Vec::new();
 
         // 获取启用的内置命令配置

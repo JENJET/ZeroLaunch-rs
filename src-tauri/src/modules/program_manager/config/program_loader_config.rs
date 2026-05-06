@@ -180,11 +180,21 @@ impl ProgramLoaderConfigInner {
     pub(crate) fn default_custom_command() -> Vec<(String, String)> {
         vec![
             // 常用系统命令预置
-            ("关机".to_string(), "shutdown /s /t 0".to_string()),
-            ("重启".to_string(), "shutdown /r /t 0".to_string()),
             (
-                "锁屏".to_string(),
+                "custom_command.shutdown".to_string(),
+                "shutdown /s /t 0".to_string(),
+            ),
+            (
+                "custom_command.restart".to_string(),
+                "shutdown /r /t 0".to_string(),
+            ),
+            (
+                "custom_command.lock_screen".to_string(),
                 "rundll32.exe user32.dll,LockWorkStation".to_string(),
+            ),
+            (
+                "custom_command.env_vars".to_string(),
+                "cmd /C start /B rundll32.exe sysdm.cpl,EditEnvironmentVariables".to_string(),
             ),
         ]
     }

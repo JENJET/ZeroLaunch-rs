@@ -122,6 +122,14 @@ import { InputContext } from '../input_states'
 
 import { useShortcuts } from '../composables/useShortcuts'
 import { useInlineParameterMode } from '../composables/useInlineParameterMode'
+
+// Type definitions
+interface LaunchTemplateInfoResponse {
+  template: string
+  kind: 'Path' | 'PackageFamilyName' | 'File' | 'Url' | 'Command'
+  placeholder_count: number
+  show_name: string
+}
 import SearchBar from './search-window-components/SearchBar.vue'
 import ResultList from './search-window-components/ResultList.vue'
 import EverythingPanel from './search-window-components/EverythingPanel.vue'
@@ -184,6 +192,9 @@ const everything_shortcut_config = ref<EverythingShortcutConfig>(default_everyth
 
 // 计算属性：是否处于 Everything 模式
 const isEverythingMode = computed(() => inputContext.value === InputContext.Everything)
+
+// 跟踪当前选中程序是否是路径类型（用于右键菜单）
+const showOpenLocation = ref<boolean>(false)
 
 const effective_ui_config = computed(() => {
   const current_mode_colors = is_dark.value ? ui_config.value.dark_mode_colors : ui_config.value.light_mode_colors
@@ -393,14 +404,23 @@ const resultSubMenuItems = computed(() => {
     
     return items
   } else {
-    // 普通模式：显示所有五个选项，屏蔽结果放在最后
-    return [
-      { name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } },
+    // 普通模式：根据程序类型动态显示菜单
+    const items = []
+    
+    // 如果是路径类型，添加"打开文件位置"
+    if (showOpenLocation.value) {
+      items.push({ name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } })
+    }
+    
+    // 基础菜单项（始终显示）
+    items.push(
       { name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } },
       { name: t('app.copy_path'), icon: DocumentCopy, action: () => { copyPath() } },
       { name: t('app.copy_name'), icon: Files, action: () => { copyName() } },
       { name: t('app.block_this_result'), icon: CircleClose, action: () => { blockCurrentResult() } }
-    ]
+    )
+    
+    return items
   }
 })
 
@@ -424,6 +444,20 @@ const isExecutableFile = (): boolean => {
   
   const lowerPath = path.toLowerCase()
   return executableExtensions.some(ext => lowerPath.endsWith(ext))
+}
+
+// 检查程序类型是否为路径类型
+const checkProgramType = async (programGuid: string): Promise<boolean> => {
+  try {
+    const info = await invoke<LaunchTemplateInfoResponse>('get_launch_template_info', {
+      programGuid: programGuid,
+    })
+    // 只有 Path 和 File 类型才显示"打开文件位置"
+    return info.kind === 'Path' || info.kind === 'File'
+  } catch (error) {
+    console.error('Failed to get launch template info:', error)
+    return false
+  }
 }
 
 // Methods
@@ -1043,6 +1077,20 @@ const contextResultItemEvent = (index: number, event: MouseEvent) => {
     searchBarMenuBuf.value?.hideMenu()
   }
   selectedIndex.value = index
+  
+  // 检查当前选中程序的类型，决定是否显示"打开文件位置"
+  if (!isEverythingMode.value) {
+    const currentResults = getCurrentResults()
+    const selected = currentResults[index]
+    if (selected) {
+      checkProgramType(selected[0]).then(isPath => {
+        showOpenLocation.value = isPath
+      })
+    } else {
+      showOpenLocation.value = false
+    }
+  }
+  
   resultItemMenuRef.value?.showMenu({ top: event.clientY, left: event.clientX })
 }
 

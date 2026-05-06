@@ -58,6 +58,12 @@
     "exit_program": "Exit Program",
     "exit_program_desc": "Save configuration and exit ZeroLaunch-rs"
   },
+  "custom_command": {
+    "shutdown": "Shutdown",
+    "restart": "Restart",
+    "lock_screen": "Lock Screen",
+    "env_vars": "Environment Variables"
+  },
   "parameter": {
     "prompt": "Enter argument {index} of {total} for {program}",
     "input_placeholder": "Type argument and press Enter",

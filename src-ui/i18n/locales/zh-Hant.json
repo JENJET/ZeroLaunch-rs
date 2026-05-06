@@ -58,6 +58,12 @@
     "exit_program": "結束程式",
     "exit_program_desc": "儲存組態並結束 ZeroLaunch-rs"
   },
+  "custom_command": {
+    "shutdown": "關機",
+    "restart": "重新啟動",
+    "lock_screen": "鎖定螢幕",
+    "env_vars": "環境變數"
+  },
   "parameter": {
     "prompt": "請輸入 {program} 的第 {index}/{total} 個參數",
     "input_placeholder": "在此輸入參數並按下 Enter 確認",

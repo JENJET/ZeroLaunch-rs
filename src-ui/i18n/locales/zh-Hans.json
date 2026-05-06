@@ -58,6 +58,12 @@
     "exit_program": "退出程序",
     "exit_program_desc": "保存配置并退出 ZeroLaunch-rs"
   },
+  "custom_command": {
+    "shutdown": "关机",
+    "restart": "重启",
+    "lock_screen": "锁屏",
+    "env_vars": "环境变量"
+  },
   "parameter": {
     "prompt": "请输入 {program} 的第 {index}/{total} 个参数",
     "input_placeholder": "在此输入参数并按回车确认",
