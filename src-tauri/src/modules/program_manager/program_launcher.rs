@@ -1,7 +1,7 @@
 use crate::error::ResultExt;
 use crate::program_manager::LaunchMethod;
 use crate::utils::defer::defer;
-use crate::utils::windows::{get_u16_vec, shell_execute_open};
+use crate::utils::windows::{explorer_select_file, get_u16_vec, shell_execute_open};
 use parking_lot::RwLock;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
@@ -9,8 +9,8 @@ use tracing::{debug, warn};
 use windows::Win32::Foundation::{GetLastError, ERROR_CANCELLED};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::UI::Shell::{
-    ApplicationActivationManager, IApplicationActivationManager, ShellExecuteExW, AO_NONE,
-    SHELLEXECUTEINFOW,
+    ApplicationActivationManager, IApplicationActivationManager, ShellExecuteExW, ShellExecuteW,
+    AO_NONE, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows_core::PCWSTR;
@@ -57,14 +57,33 @@ impl ProgramLauncherInner {
     }
 
     fn launch_command(&self, command: &str) {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-
         let command = command.trim();
         if command.is_empty() {
             warn!("启动命令失败: 命令为空");
             return;
         }
+
+        // GUI 命令（如 rundll32.exe 的 CPL 调用）通过 ShellExecuteW 启动，
+        // 确保能正确附加到交互式桌面，避免模态对话框卡住或无法显示
+        if let Some(args) = command.strip_prefix("rundll32.exe ") {
+            let exe = get_u16_vec("rundll32.exe");
+            let params = get_u16_vec(args);
+            unsafe {
+                ShellExecuteW(
+                    None,
+                    PCWSTR::from_raw(std::ptr::null()),
+                    PCWSTR::from_raw(exe.as_ptr()),
+                    PCWSTR::from_raw(params.as_ptr()),
+                    PCWSTR::from_raw(std::ptr::null()),
+                    SW_SHOWNORMAL,
+                );
+            }
+            return;
+        }
+
+        // 控制台命令通过 cmd.exe 隐藏窗口启动
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
 
         let result = std::process::Command::new("cmd")
             .args(["/D", "/S", "/C"])
@@ -232,29 +251,17 @@ impl ProgramLauncherInner {
         let target_path = launch_method.get_text();
         let target_path = Path::new(&target_path);
 
-        let folder_to_open = if target_path.is_dir() {
-            target_path
-        } else {
-            target_path.parent().unwrap_or_else(|| {
-                warn!(
-                    "Target path has no parent, fallback to original path: {}",
-                    target_path.display()
-                );
-                target_path
-            })
-        };
-
-        if !folder_to_open.exists() {
+        if !target_path.exists() {
             warn!(
-                "Target folder does not exist and cannot be opened: {}",
-                folder_to_open.display()
+                "Target path does not exist and cannot be opened: {}",
+                target_path.display()
             );
             return false;
         }
 
-        if let Err(error) = shell_execute_open(folder_to_open) {
+        if let Err(error) = explorer_select_file(target_path) {
             warn!(
-                "Failed to open folder with default file manager. Error code: {}",
+                "Failed to open folder with file selected. Error code: {}",
                 error.to_hresult()
             );
             return false;

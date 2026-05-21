@@ -974,17 +974,6 @@ const handleEverythingItemClick = (itemIndex: number) => {
   selectedIndex.value = itemIndex
 }
 
-const initSearchBar = () => {
-  searchText.value = ''
-  selectedIndex.value = 0
-  clearInlineParameterSession()
-  resetParameterSession()
-  inputContext.value = InputContext.MainSearch
-  if (resultsListRef.value?.resultsListRef) {
-    resultsListRef.value.resultsListRef.scrollTop = 0
-  }
-}
-
 const handleClickOutside = () => {
   if (searchBarMenuBuf.value?.isVisible()) {
     searchBarMenuBuf.value?.hideMenu()

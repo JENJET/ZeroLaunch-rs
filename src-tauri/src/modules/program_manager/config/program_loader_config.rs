@@ -194,7 +194,7 @@ impl ProgramLoaderConfigInner {
             ),
             (
                 "custom_command.env_vars".to_string(),
-                "cmd /C start /B rundll32.exe sysdm.cpl,EditEnvironmentVariables".to_string(),
+                "rundll32.exe sysdm.cpl,EditEnvironmentVariables".to_string(),
             ),
         ]
     }

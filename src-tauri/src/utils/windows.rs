@@ -121,6 +121,28 @@ pub fn expand_environment_variables(input: &str) -> Option<String> {
     }
 }
 
+/// 使用 explorer.exe /select 打开文件所在位置并选中文件
+pub fn explorer_select_file<P: AsRef<Path>>(path: P) -> Result<(), WIN32_ERROR> {
+    let explorer = get_u16_vec("explorer.exe");
+    let args = get_u16_vec(format!("/select,\"{}\"", path.as_ref().display()));
+    unsafe {
+        let result = ShellExecuteW(
+            None,
+            PCWSTR::from_raw(std::ptr::null()),
+            PCWSTR::from_raw(explorer.as_ptr()),
+            PCWSTR::from_raw(args.as_ptr()),
+            PCWSTR::from_raw(std::ptr::null()),
+            SW_SHOWNORMAL,
+        );
+
+        if result.0 as isize <= 32 {
+            Err(GetLastError())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// 使用 ShellExecuteW 以系统默认方式打开指定路径
 pub fn shell_execute_open<P: AsRef<Path>>(path: P) -> Result<(), WIN32_ERROR> {
     let wide_path = get_u16_vec(path);

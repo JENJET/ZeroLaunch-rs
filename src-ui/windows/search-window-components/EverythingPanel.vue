@@ -229,7 +229,7 @@ const loadSingleIcon = async (path: string) => {
             iconMap.value.set(path, url)
         }
     } catch (e) {
-        if (e.name !== 'AbortError') {
+        if (e instanceof Error && e.name !== 'AbortError') {
             console.error('Failed to load icon for', path, e)
         }
     } finally {
@@ -247,8 +247,7 @@ const loadVisibleIcons = async () => {
 }
 
 // 图标加载成功
-const onIconLoad = (path: string) => {
-    // 可以在这里添加日志或统计
+const onIconLoad = (_path: string) => {
 }
 
 // 图标加载失败

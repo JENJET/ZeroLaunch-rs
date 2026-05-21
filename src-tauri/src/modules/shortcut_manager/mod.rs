@@ -5,7 +5,6 @@ use crate::utils::notify::notify_i18n_with;
 use crate::utils::service_locator::ServiceLocator;
 use crate::utils::ui_controller::toggle_search_bar;
 use parking_lot::Mutex;
-use rdev::{listen, EventType, Key};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +15,8 @@ use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut as TauriShortcut, ShortcutState,
 };
-use tracing::{error, info, warn};
+use tracing::{info, warn};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Shortcut {
     pub key: String,
@@ -74,67 +74,57 @@ impl ShortcutManagerInner {
             return;
         }
 
+        const VK_LCONTROL: i32 = 0xA2;
+        const VK_RCONTROL: i32 = 0xA3;
+
         thread::spawn(|| {
-            info!("Starting Double Ctrl listener");
+            info!("Starting Double Ctrl listener (polling mode)");
             let mut last_ctrl_press = Instant::now();
             let mut press_count = 0;
-            let mut last_key_was_release = false;
+            let mut ctrl_released = true;
 
-            if let Err(error) = listen(move |event| {
+            loop {
                 if !DOUBLE_CTRL_ENABLED.load(Ordering::Relaxed) {
-                    // Reset state when disabled to prevent stale state when re-enabled
                     press_count = 0;
-                    last_key_was_release = false;
-                    return;
+                    ctrl_released = true;
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
                 }
 
-                match event.event_type {
-                    EventType::KeyPress(Key::ControlLeft)
-                    | EventType::KeyPress(Key::ControlRight) => {
-                        let now = Instant::now();
-                        if now.duration_since(last_ctrl_press) < Duration::from_millis(400) {
-                            if press_count == 1 {
-                                if last_key_was_release {
-                                    press_count = 2;
-                                } else {
-                                    press_count = 1;
-                                }
-                            } else {
-                                press_count = 1;
-                            }
+                let left_down = unsafe { GetAsyncKeyState(VK_LCONTROL) < 0 };
+                let right_down = unsafe { GetAsyncKeyState(VK_RCONTROL) < 0 };
+                let ctrl_down = left_down || right_down;
+
+                if ctrl_down && ctrl_released {
+                    let now = Instant::now();
+                    if now.duration_since(last_ctrl_press) < Duration::from_millis(400) {
+                        if press_count >= 1 {
+                            press_count = 2;
                         } else {
                             press_count = 1;
                         }
-                        last_ctrl_press = now;
-                        last_key_was_release = false;
-
-                        if press_count == 2 {
-                            press_count = 0; // Reset
-
-                            // Trigger action
-                            let state = ServiceLocator::get_state();
-                            if state.get_game_mode() {
-                                return;
-                            }
-
-                            let app_handle = state.get_main_handle();
-                            toggle_search_bar(&app_handle);
-                        }
+                    } else {
+                        press_count = 1;
                     }
-                    EventType::KeyRelease(Key::ControlLeft)
-                    | EventType::KeyRelease(Key::ControlRight) => {
-                        last_key_was_release = true;
-                    }
-                    EventType::KeyPress(_) => {
-                        // Any other key press resets the counter
+                    last_ctrl_press = now;
+                    ctrl_released = false;
+
+                    if press_count == 2 {
                         press_count = 0;
-                        last_key_was_release = false;
+
+                        let state = ServiceLocator::get_state();
+                        if state.get_game_mode() {
+                            continue;
+                        }
+
+                        let app_handle = state.get_main_handle();
+                        toggle_search_bar(&app_handle);
                     }
-                    _ => {}
+                } else if !ctrl_down {
+                    ctrl_released = true;
                 }
-            }) {
-                error!("Double Ctrl listener error: {:?}", error);
-                DOUBLE_CTRL_LISTENING.store(false, Ordering::Relaxed);
+
+                thread::sleep(Duration::from_millis(20));
             }
         });
     }

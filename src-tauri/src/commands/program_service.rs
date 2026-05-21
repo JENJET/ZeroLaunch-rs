@@ -475,36 +475,24 @@ pub async fn handle_everything_search<R: Runtime>(
     Ok(Vec::new())
 }
 
-/// 在资源管理器中打开文件所在目录
+/// 在资源管理器中打开文件所在目录并选中文件
 #[tauri::command]
 pub async fn open_file_parent_folder<R: Runtime>(
     _app: tauri::AppHandle<R>,
     _window: tauri::Window<R>,
     path: String,
 ) -> Result<bool, String> {
-    use crate::utils::windows::shell_execute_open;
+    use crate::utils::windows::explorer_select_file;
     use std::path::Path;
 
     let target_path = Path::new(&path);
-    let folder_to_open = if target_path.is_dir() {
-        target_path
-    } else {
-        match target_path.parent() {
-            Some(parent) => parent,
-            None => {
-                return Err("无法获取父目录".to_string());
-            }
-        }
-    };
 
-    if !folder_to_open.exists() {
-        return Err(format!("目录不存在: {}", folder_to_open.display()));
+    if !target_path.exists() {
+        return Err(format!("路径不存在: {}", target_path.display()));
     }
 
-    match shell_execute_open(folder_to_open) {
-        Ok(_) => Ok(true),
-        Err(e) => Err(format!("打开文件夹失败: {:?}", e)),
-    }
+    explorer_select_file(target_path).map_err(|e| format!("打开文件夹失败: {:?}", e))?;
+    Ok(true)
 }
 
 /// 以管理员身份运行文件

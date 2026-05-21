@@ -183,7 +183,6 @@ const {
     filteredProgramList,
     showAllMode,
     handleSearch,
-    toggleShowAll,
     resetLoadedState,
     getIconUrl,
     isIconLoading
