@@ -40,7 +40,7 @@ impl ProgramLauncherInner {
                 self.launch_url(url);
             }
             LaunchMethod::Command(command) => {
-                self.launch_command(command);
+                self.launch_command(command, is_admin_required);
             }
             LaunchMethod::BuiltinCommand(command) => {
                 self.handle_builtin_command(command);
@@ -56,10 +56,15 @@ impl ProgramLauncherInner {
         );
     }
 
-    fn launch_command(&self, command: &str) {
+    fn launch_command(&self, command: &str, is_admin_required: bool) {
         let command = command.trim();
         if command.is_empty() {
             warn!("启动命令失败: 命令为空");
+            return;
+        }
+
+        if is_admin_required {
+            self.launch_command_elevated(command);
             return;
         }
 
@@ -93,6 +98,40 @@ impl ProgramLauncherInner {
 
         if let Err(error) = result {
             warn!("启动命令失败: {:?}", error);
+        }
+    }
+
+    fn launch_command_elevated(&self, command: &str) {
+        // 对 rundll32 命令直接提权启动，其他命令通过 cmd.exe /C 提权
+        let (exe, params) = if let Some(args) = command.strip_prefix("rundll32.exe ") {
+            ("rundll32.exe".to_string(), args.to_string())
+        } else {
+            ("cmd.exe".to_string(), format!("/D /S /C {}", command))
+        };
+
+        let exe_wide = get_u16_vec(&exe);
+        let params_wide = get_u16_vec(&params);
+        let lp_verb = get_u16_vec("runas");
+
+        unsafe {
+            let mut sei: SHELLEXECUTEINFOW = std::mem::zeroed();
+            sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+            sei.lpVerb = PCWSTR::from_raw(lp_verb.as_ptr());
+            sei.lpFile = PCWSTR::from_raw(exe_wide.as_ptr());
+            sei.lpParameters = PCWSTR::from_raw(params_wide.as_ptr());
+            sei.nShow = SW_SHOWNORMAL.0;
+
+            if ShellExecuteExW(&mut sei).is_err() {
+                let error = GetLastError();
+                if error == ERROR_CANCELLED {
+                    warn!("User declined the elevation request.");
+                } else {
+                    warn!(
+                        "Failed to start command with elevation. Error: {}",
+                        error.to_hresult()
+                    );
+                }
+            }
         }
     }
 
