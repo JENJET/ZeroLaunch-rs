@@ -1,48 +1,95 @@
 @echo off
-chcp 65001 >nul
 setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo        ZeroLaunch-rs ä¸€é”®æ‰“åŒ…å·¥å…·
-echo        ä½¿ç”¨ xtask æ„å»ºæ‰€æœ‰ç‰ˆæœ¬
+echo        ZeroLaunch-rs Ò»¼ü´ò°ü¹¤¾ß
+echo        Ê¹ÓÃ xtask ¹¹½¨ËùÓĞ°æ±¾
 echo ============================================================
 echo.
 
-:: æ£€æŸ¥æ˜¯å¦åœ¨é¡¹ç›®æ ¹ç›®å½•
 if not exist "xtask\Cargo.toml" (
-    echo [é”™è¯¯] è¯·åœ¨é¡¹ç›®æ ¹ç›®å½•ä¸‹è¿è¡Œæ­¤è„šæœ¬ï¼
+    echo [´íÎó] ÇëÔÚÏîÄ¿¸ùÄ¿Â¼ÏÂÔËĞĞ´Ë½Å±¾£¡
     pause
     exit /b 1
 )
 
-:: åˆ‡æ¢åˆ°çˆ¶ç›®å½•ï¼ˆxtask éœ€è¦åœ¨å…¶å­ç›®å½•ä¸‹è¿è¡Œï¼‰
-cd xtask
+set "VS_INSTALL_PATH="
+if exist "C:\Program Files\Microsoft Visual Studio\18\Community" set "VS_INSTALL_PATH=C:\Program Files\Microsoft Visual Studio\18\Community"
+if exist "C:\Program Files\Microsoft Visual Studio\17\Community" set "VS_INSTALL_PATH=C:\Program Files\Microsoft Visual Studio\17\Community"
+if exist "C:\Program Files\Microsoft Visual Studio\16\Community" set "VS_INSTALL_PATH=C:\Program Files\Microsoft Visual Studio\16\Community"
 
-:: æ˜¾ç¤ºå½“å‰æ—¶é—´
-echo [ä¿¡æ¯] å¼€å§‹æ—¶é—´: %date% %time%
+if "%VS_INSTALL_PATH%"=="" (
+    echo [´íÎó] Î´ÕÒµ½ Visual Studio °²×°£¬ÇëÏÈ°²×° Visual Studio 2022+
+    pause
+    exit /b 1
+)
+
+set "VCVARSALL=%VS_INSTALL_PATH%\VC\Auxiliary\Build\vcvarsall.bat"
+if not exist "%VCVARSALL%" (
+    echo [´íÎó] Î´ÕÒµ½ vcvarsall.bat£¬Çë¼ì²é Visual Studio °²×°
+    pause
+    exit /b 1
+)
+
+set "HAS_ARM64_TOOLS=0"
+for /f "delims=" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64') do set "HAS_ARM64_TOOLS=1"
+
+echo [ĞÅÏ¢] ¿ªÊ¼Ê±¼ä: %date% %time%
 echo.
 
-:: è¯¢é—®ç”¨æˆ·é€‰æ‹©æ„å»ºæ¨¡å¼
-echo è¯·é€‰æ‹©æ„å»ºæ¨¡å¼:
-echo   1. æ„å»ºæ‰€æœ‰ç‰ˆæœ¬ (x64 + ARM64, å¯ç”¨AI + ç¦ç”¨AI) [æ¨è]
-echo   2. ä»…æ„å»ºå¯ç”¨AIç‰ˆæœ¬ (x64 + ARM64)
-echo   3. ä»…æ„å»ºç¦ç”¨AIç‰ˆæœ¬ (x64 + ARM64)
-echo   4. ä»…æ„å»º x64 æ¶æ„ (å¯ç”¨AI + ç¦ç”¨AI)
-echo   5. ä»…æ„å»º ARM64 æ¶æ„ (å¯ç”¨AI + ç¦ç”¨AI)
-echo   6. å¿«é€Ÿæ„å»º: ä»… x64 å¯ç”¨AIç‰ˆæœ¬
-echo   7. æ¸…ç†æ„å»ºäº§ç‰©
+echo ÇëÑ¡Ôñ¹¹½¨Ä£Ê½:
+echo   1. ¹¹½¨ËùÓĞ°æ±¾ (x64 + ARM64, ÆôÓÃAI + ½ûÓÃAI) [ÍÆ¼ö]
+echo   2. ½ö¹¹½¨ÆôÓÃAI°æ±¾ (x64 + ARM64)
+echo   3. ½ö¹¹½¨½ûÓÃAI°æ±¾ (x64 + ARM64)
+echo   4. ½ö¹¹½¨ x64 ¼Ü¹¹ (ÆôÓÃAI + ½ûÓÃAI)
+echo   5. ½ö¹¹½¨ ARM64 ¼Ü¹¹ (ÆôÓÃAI + ½ûÓÃAI)
+echo   6. ¿ìËÙ¹¹½¨: ½ö x64 ±ãĞ¯°æ + ÆôÓÃAI°æ±¾
+echo   7. ÇåÀí¹¹½¨²úÎï
 echo.
-set /p choice="è¯·è¾“å…¥é€‰é¡¹ (1-7, é»˜è®¤ 1): "
+set /p choice="ÇëÊäÈëÑ¡Ïî (1-7, Ä¬ÈÏ 1): "
 
 if "%choice%"=="" set choice=1
 
 echo.
-echo [ä¿¡æ¯] æ‚¨é€‰æ‹©äº†é€‰é¡¹: %choice%
+echo [ĞÅÏ¢] ÄúÑ¡ÔñÁËÑ¡Ïî: %choice%
 echo.
 
-:: æ ¹æ®é€‰æ‹©æ‰§è¡Œä¸åŒçš„æ„å»ºå‘½ä»¤
+if "%choice%"=="1" goto :check_arm64
+if "%choice%"=="2" goto :check_arm64
+if "%choice%"=="3" goto :check_arm64
+if "%choice%"=="5" goto :check_arm64
+goto :run
+
+:check_arm64
+if "%HAS_ARM64_TOOLS%"=="0" (
+    echo [´íÎó] È±ÉÙ ARM64 ½»²æ±àÒë¹¤¾ß£¡
+    echo.
+    echo ÇëÒÔ¹ÜÀíÔ±Éí·İÔËĞĞÒÔÏÂÃüÁî°²×°:
+    echo   "C:\Program Files (x86)\Microsoft Visual Studio\Installer\setup.exe" ^
+    echo        modify --installPath "%VS_INSTALL_PATH%" ^
+    echo        --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 ^
+    echo        --passive --norestart
+    echo.
+    echo °²×°Íê³Éºó£¬ÖØĞÂÔËĞĞ´Ë½Å±¾¡£
+    echo.
+    pause
+    exit /b 1
+)
+
+if "%choice%"=="7" goto :run
+call "%VCVARSALL%" amd64 >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [´íÎó] Visual Studio ±àÒë»·¾³³õÊ¼»¯Ê§°Ü£¡ÇëÈ·±£ÒÑ°²×°ÁË"Ê¹ÓÃC++µÄ×ÀÃæ¿ª·¢"¹¤×÷¸ºÔØ
+    pause
+    exit /b 1
+)
+
+:run
+cd xtask
+
 if "%choice%"=="1" (
+    cargo run --bin xtask clean
     cargo run --bin xtask build-all
 ) else if "%choice%"=="2" (
     cargo run --bin xtask build-all --ai enabled
@@ -54,31 +101,29 @@ if "%choice%"=="1" (
     cargo run --bin xtask build-all --arch arm64
 ) else if "%choice%"=="6" (
     cargo run --bin xtask build-portable --arch x64 --ai enabled
-    cargo run --bin xtask build-installer --arch x64 --ai enabled
 ) else if "%choice%"=="7" (
     cargo run --bin xtask clean
     goto :end
 ) else (
-    echo [é”™è¯¯] æ— æ•ˆçš„é€‰é¡¹ï¼
+    echo [´íÎó] ÎŞĞ§µÄÑ¡Ïî£¡
     pause
     exit /b 1
 )
 
-:: æ£€æŸ¥æ„å»ºç»“æœ
 if %errorlevel% equ 0 (
     echo.
     echo ============================================================
-    echo                      æ„å»ºæˆåŠŸï¼
+    echo                    ¹¹½¨³É¹¦£¡
     echo ============================================================
 ) else (
     echo.
     echo ============================================================
-    echo                      æ„å»ºå¤±è´¥ï¼
+    echo                    ¹¹½¨Ê§°Ü£¡
     echo ============================================================
 )
 
 :end
 echo.
-echo [ä¿¡æ¯] ç»“æŸæ—¶é—´: %date% %time%
+echo [ĞÅÏ¢] ½áÊøÊ±¼ä: %date% %time%
 echo.
 pause
