@@ -46,6 +46,40 @@
             v-model="config.app_config.is_auto_start"
             @change="(val: boolean) => configStore.updateConfig({ app_config: { is_auto_start: val } })"
           />
+          <template v-if="autoStartAdmin === true">
+            <span style="margin-left: 8px; font-size: 12px; color: #e6a23c;">({{ t('app_config.admin') }})</span>
+          </template>
+          <template v-else-if="autoStartAdmin === false">
+            <span style="margin-left: 8px; font-size: 12px; color: #909399;">({{ t('app_config.normal') }})</span>
+            <el-tooltip placement="top" :content="t('app_config.auto_start_normal_hint')">
+              <el-icon class="el-question-icon" style="font-size: 14px; color: #909399;">
+                <QuestionFilled />
+              </el-icon>
+            </el-tooltip>
+          </template>
+        </el-form-item>
+        <el-form-item :label="t('app_config.running_as_admin')">
+          <el-tag :type="isAdmin ? 'danger' : 'info'" size="small">
+            {{ isAdmin ? t('app_config.yes') : t('app_config.no') }}
+          </el-tag>
+          <el-button
+            v-if="!isAdmin"
+            type="primary"
+            size="small"
+            style="margin-left: 12px"
+            :loading="restarting"
+            @click="restartAsAdmin"
+          >
+            {{ t('app_config.restart_as_admin') }}
+          </el-button>
+          <el-tooltip
+            placement="top"
+            :content="t('app_config.auto_start_admin_hint')"
+          >
+            <el-icon class="el-question-icon">
+              <QuestionFilled />
+            </el-icon>
+          </el-tooltip>
         </el-form-item>
 
         <el-form-item :label="t('app_config.silent_start')">
@@ -301,9 +335,10 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 import { useRemoteConfigStore } from '../../../stores/remote_config'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { initializeLanguage } from '../../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { ElMessage } from 'element-plus'
 
@@ -323,6 +358,46 @@ const currentLanguage = computed({
 
 const changeLanguage = (lang: string) => {
     currentLanguage.value = lang
+}
+
+// 检查当前是否以管理员权限运行
+const isAdmin = ref(false)
+const restarting = ref(false)
+const autoStartAdmin = ref<boolean | null>(null)
+
+const fetchAutoStartAdmin = async () => {
+    try {
+        autoStartAdmin.value = await invoke<boolean | null>('command_get_auto_start_admin')
+    } catch (error) {
+        console.error('查询自启动状态失败:', error)
+    }
+}
+
+let unlistenAutoStart: (() => void) | undefined
+onMounted(async () => {
+    try {
+        isAdmin.value = await invoke<boolean>('command_is_running_as_admin')
+    } catch (error) {
+        console.error('检查管理员权限失败:', error)
+    }
+    await fetchAutoStartAdmin()
+    // 监听保存后刷新
+    const unlisten = await listen('auto_start_applied', () => fetchAutoStartAdmin())
+    unlistenAutoStart = unlisten
+})
+onUnmounted(() => {
+    unlistenAutoStart?.()
+})
+
+// 以管理员身份重新启动
+const restartAsAdmin = async () => {
+    restarting.value = true
+    try {
+        await invoke('command_restart_as_admin')
+    } catch (error) {
+        console.error('以管理员重新启动失败:', error)
+        restarting.value = false
+    }
 }
 
 // 导出日志功能

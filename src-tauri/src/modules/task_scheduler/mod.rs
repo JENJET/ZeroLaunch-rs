@@ -18,14 +18,20 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub struct TaskScheduler {
     task_name: String,
     exe_path: String,
+    run_as_admin: bool,
 }
 
 impl TaskScheduler {
     /// 创建新的任务计划程序管理器
-    pub fn new(task_name: impl Into<String>, exe_path: impl Into<String>) -> Self {
+    pub fn new(
+        task_name: impl Into<String>,
+        exe_path: impl Into<String>,
+        run_as_admin: bool,
+    ) -> Self {
         Self {
             task_name: task_name.into(),
             exe_path: exe_path.into(),
+            run_as_admin,
         }
     }
 
@@ -46,8 +52,15 @@ impl TaskScheduler {
                 return Ok(());
             }
             Err(e) => {
-                warn!("任务计划程序设置失败: {}。尝试使用注册表方式...", e);
                 let _ = self.disable_via_task_scheduler();
+                if self.run_as_admin {
+                    warn!("管理员自启动任务计划程序设置失败: {}", e);
+                    return Err(format!(
+                        "管理员自启动必须通过任务计划程序创建，无法回退到注册表: {}",
+                        e
+                    ));
+                }
+                warn!("任务计划程序设置失败: {}。尝试使用注册表方式...", e);
             }
         }
 
@@ -87,6 +100,31 @@ impl TaskScheduler {
             } else {
                 Ok(())
             }
+        }
+    }
+
+    /// 获取任务计划程序的管理员运行状态
+    /// 返回 None 表示任务不存在或查询失败，Some(true) 表示管理员模式，Some(false) 表示普通模式
+    pub fn is_admin_task(&self) -> Option<bool> {
+        if !self.is_enabled_via_task_scheduler().unwrap_or(false) {
+            return None;
+        }
+
+        let output = Command::new("schtasks")
+            .args(["/Query", "/TN", &self.task_name, "/XML"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let xml = String::from_utf8_lossy(&output.stdout);
+        if xml.contains("<RunLevel>HighestAvailable</RunLevel>") {
+            Some(true)
+        } else {
+            Some(false)
         }
     }
 
@@ -295,12 +333,19 @@ impl TaskScheduler {
             .unwrap_or_else(|| String::from("C:\\"));
         let working_dir_escaped = escape_xml(&working_dir);
 
+        let run_level = if self.run_as_admin {
+            "HighestAvailable"
+        } else {
+            "LeastPrivilege"
+        };
+
         let template: &str = include_str!("./task_template.xml");
         template
             .replace("${AUTHOR}", &author)
             .replace("${USER_ID}", &user_id)
             .replace("${EXE}", &exe_path_escaped)
             .replace("${WORKDIR}", &working_dir_escaped)
+            .replace("${RUN_LEVEL}", run_level)
     }
 
     fn current_user_id() -> String {
@@ -346,8 +391,31 @@ mod tests {
 
     #[test]
     fn test_task_scheduler_creation() {
-        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe");
+        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe", false);
         assert_eq!(scheduler.task_name, "TestTask");
         assert_eq!(scheduler.exe_path, "C:\\test.exe");
+        assert!(!scheduler.run_as_admin);
+    }
+
+    #[test]
+    fn test_task_scheduler_admin() {
+        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe", true);
+        assert!(scheduler.run_as_admin);
+    }
+
+    #[test]
+    fn test_task_xml_uses_least_privilege_by_default() {
+        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe", false);
+        let xml = scheduler.generate_task_xml();
+        assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
+        assert!(!xml.contains("${RUN_LEVEL}"));
+    }
+
+    #[test]
+    fn test_task_xml_uses_highest_available_for_admin_autostart() {
+        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe", true);
+        let xml = scheduler.generate_task_xml();
+        assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"));
+        assert!(!xml.contains("${RUN_LEVEL}"));
     }
 }

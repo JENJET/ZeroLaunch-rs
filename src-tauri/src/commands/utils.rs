@@ -144,6 +144,69 @@ fn export_logs_internal(log_dir: &str, save_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 检查当前进程是否以管理员权限运行
+pub fn is_running_as_admin() -> bool {
+    // IsUserAnAdmin 是 shell32 中判断当前进程是否以管理员身份运行的函数
+    #[link(name = "shell32")]
+    extern "system" {
+        fn IsUserAnAdmin() -> i32;
+    }
+    // SAFETY: IsUserAnAdmin is a pure Win32 query function with no pointer
+    // arguments and no side effects. It returns 0 (non-admin) or non-zero (admin).
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+#[tauri::command]
+pub fn command_is_running_as_admin() -> bool {
+    is_running_as_admin()
+}
+
+/// 查询当前自动启动任务是否以管理员权限运行
+#[tauri::command]
+pub fn command_get_auto_start_admin() -> Option<bool> {
+    let username = whoami::username();
+    let full_task_name = format!("ZeroLaunch-rs\\autostart ({})", username);
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_path_str = exe_path.to_str()?;
+
+    let scheduler =
+        crate::modules::task_scheduler::TaskScheduler::new(full_task_name, exe_path_str, false);
+    scheduler.is_admin_task()
+}
+
+/// 以管理员权限重新启动当前程序（非管理员时调用，调用后退出当前进程）
+#[tauri::command]
+pub async fn command_restart_as_admin() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let exe_path = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+    let exe_wide: Vec<u16> = exe_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut sei: SHELLEXECUTEINFOW = std::mem::zeroed();
+        sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        sei.lpVerb = PCWSTR::from_raw(verb.as_ptr());
+        sei.lpFile = PCWSTR::from_raw(exe_wide.as_ptr());
+        sei.nShow = SW_SHOWNORMAL.0;
+        sei.fMask = SEE_MASK_NOASYNC;
+
+        if ShellExecuteExW(&mut sei).is_err() {
+            return Err("以管理员身份重新启动失败".to_string());
+        }
+    }
+
+    // 启动成功后退出当前进程
+    std::process::exit(0);
+}
+
 #[tauri::command]
 pub fn command_get_arch() -> String {
     std::env::consts::ARCH.to_string()

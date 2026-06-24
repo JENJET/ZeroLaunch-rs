@@ -239,6 +239,9 @@ pub fn run() {
             command_get_arch,
             command_download_model,
             get_everything_icon,
+            command_is_running_as_admin,
+            command_restart_as_admin,
+            command_get_auto_start_admin,
         ])
         .build(tauri::generate_context!())
         .expect_programming("error while building tauri application")
@@ -755,9 +758,9 @@ fn init_setting_window(app: tauri::AppHandle) {
         let config_clone = config.clone();
         setting_window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // 保存当前位置和大小到配置（使用物理像素）
+                // 保存当前位置和大小到配置（位置用 outer，大小用 inner 以匹配 set_size）
                 if let (Ok(position), Ok(size)) =
-                    (window_clone.outer_position(), window_clone.outer_size())
+                    (window_clone.outer_position(), window_clone.inner_size())
                 {
                     use crate::modules::config::setting_window_state::PartialSettingWindowState;
                     config_clone.update(PartialRuntimeConfig {
@@ -769,11 +772,6 @@ fn init_setting_window(app: tauri::AppHandle) {
                         }),
                         ..Default::default()
                     });
-                    info!(
-                        "Saved setting window state to memory: x={}, y={}, width={}, height={}",
-                        position.x, position.y, size.width, size.height
-                    );
-
                     info!(
                         "Saved setting window state to memory: x={}, y={}, width={}, height={}",
                         position.x, position.y, size.width, size.height
@@ -1099,23 +1097,29 @@ pub fn handle_auto_start() -> Result<(), Box<dyn std::error::Error>> {
 
     let full_task_name = format!("{}\\{}", folder_name, task_base_name);
 
-    // 创建任务计划程序管理器
-    use crate::modules::task_scheduler::TaskScheduler;
-    let task_scheduler = TaskScheduler::new(full_task_name, exe_path_str);
-
     // 获取运行时配置
     let is_auto_start = {
         let config = state.get_runtime_config();
         config.get_app_config().get_is_auto_start()
     };
 
-    // 根据配置强制更新自动启动状态 (这部分逻辑保持不变)
+    // 自启动权限跟随设置时的运行权限：管理员态设置则下次管理员启动，普通态设置则普通启动。
+    let run_as_admin = crate::commands::utils::is_running_as_admin();
+    info!("自动启动任务运行级别: run_as_admin={}", run_as_admin);
+
+    use crate::modules::task_scheduler::TaskScheduler;
+    let task_scheduler = TaskScheduler::new(full_task_name, exe_path_str, run_as_admin);
+
     if is_auto_start {
-        info!("启用自动启动功能");
-        task_scheduler
-            .enable()
-            .map_err(|e| format!("启用自动启动失败: {}", e))?;
-        debug!("自动启动已启用");
+        if !run_as_admin && task_scheduler.is_enabled().unwrap_or(false) {
+            // 非管理员且任务已存在：保留现有权限，不降级
+            info!("非管理员模式，保留现有自启动任务权限");
+        } else {
+            // 管理员升级/创建 或 非管理员首次创建
+            task_scheduler
+                .enable()
+                .map_err(|e| format!("启用自动启动失败: {}", e))?;
+        }
     } else {
         info!("检查并禁用自动启动功能");
         if task_scheduler

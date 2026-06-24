@@ -14,7 +14,7 @@
     <Principal id="Author">
       <UserId>${USER_ID}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
+      <RunLevel>${RUN_LEVEL}</RunLevel>
     </Principal>
   </Principals>
   <Settings>

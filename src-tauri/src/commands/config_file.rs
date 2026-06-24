@@ -35,6 +35,13 @@ pub async fn command_save_remote_config<R: Runtime>(
     // Update tray icon if needed
     update_tray_icon_theme();
 
+    // 保存配置后立即应用自启动设置（创建/删除任务）
+    if let Err(e) = crate::handle_auto_start() {
+        error!("保存后应用自启动设置失败: {:?}", e);
+    }
+    // 通知前端自启动状态已更新
+    let _ = _app.emit("auto_start_applied", ());
+
     save_config_to_file(true).await;
     info!("💾 远程配置保存完成");
 
