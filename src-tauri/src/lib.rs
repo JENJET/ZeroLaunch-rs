@@ -490,6 +490,10 @@ fn init_search_bar_window(app: &mut App) {
         }
         if let tauri::WindowEvent::Focused(focused) = event {
             if !focused {
+                let visible = ServiceLocator::get_state().get_search_bar_visible();
+                if !visible {
+                    return;
+                }
                 // 获取当前鼠标位置
                 let mut point = POINT { x: 0, y: 0 };
                 unsafe {

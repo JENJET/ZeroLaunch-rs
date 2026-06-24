@@ -195,6 +195,8 @@ const isEverythingMode = computed(() => inputContext.value === InputContext.Ever
 
 // 跟踪当前选中程序是否是路径类型（用于右键菜单）
 const showOpenLocation = ref<boolean>(false)
+// 跟踪当前选中程序是否支持管理员运行
+const canRunAsAdmin = ref<boolean>(true)
 
 const effective_ui_config = computed(() => {
   const current_mode_colors = is_dark.value ? ui_config.value.dark_mode_colors : ui_config.value.light_mode_colors
@@ -412,9 +414,11 @@ const resultSubMenuItems = computed(() => {
       items.push({ name: t('app.open_file_location'), icon: FolderOpened, action: () => { openFolder() } })
     }
     
-    // 基础菜单项（始终显示）
+    // 基础菜单项
+    if (canRunAsAdmin.value) {
+      items.push({ name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } })
+    }
     items.push(
-      { name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } },
       { name: t('app.copy_path'), icon: DocumentCopy, action: () => { copyPath() } },
       { name: t('app.copy_name'), icon: Files, action: () => { copyName() } },
       { name: t('app.block_this_result'), icon: CircleClose, action: () => { blockCurrentResult() } }
@@ -454,6 +458,20 @@ const checkProgramType = async (programGuid: string): Promise<boolean> => {
     })
     // 只有 Path 和 File 类型才显示"打开文件位置"
     return info.kind === 'Path' || info.kind === 'File'
+  } catch (error) {
+    console.error('Failed to get launch template info:', error)
+    return false
+  }
+}
+
+// 检查程序类型是否支持管理员运行
+const checkCanRunAsAdmin = async (programGuid: string): Promise<boolean> => {
+  try {
+    const info = await invoke<LaunchTemplateInfoResponse>('get_launch_template_info', {
+      programGuid: programGuid,
+    })
+    // UWP/MSIX apps are activated through their AUMID and do not support generic runas elevation.
+    return info.kind === 'Path' || info.kind === 'Command'
   } catch (error) {
     console.error('Failed to get launch template info:', error)
     return false
@@ -1067,7 +1085,7 @@ const contextResultItemEvent = (index: number, event: MouseEvent) => {
   }
   selectedIndex.value = index
   
-  // 检查当前选中程序的类型，决定是否显示"打开文件位置"
+  // 检查当前选中程序的类型，决定右键菜单显示哪些选项
   if (!isEverythingMode.value) {
     const currentResults = getCurrentResults()
     const selected = currentResults[index]
@@ -1075,8 +1093,12 @@ const contextResultItemEvent = (index: number, event: MouseEvent) => {
       checkProgramType(selected[0]).then(isPath => {
         showOpenLocation.value = isPath
       })
+      checkCanRunAsAdmin(selected[0]).then(canRun => {
+        canRunAsAdmin.value = canRun
+      })
     } else {
       showOpenLocation.value = false
+      canRunAsAdmin.value = false
     }
   }
   
@@ -1457,4 +1479,3 @@ main {
   display: flex;
 }
 </style>
-

@@ -3,7 +3,8 @@ pub mod shortcut_config;
 use crate::error::OptionExt;
 use crate::utils::notify::notify_i18n_with;
 use crate::utils::service_locator::ServiceLocator;
-use crate::utils::ui_controller::toggle_search_bar;
+use crate::utils::ui_controller::{handle_pressed, toggle_search_bar};
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -16,7 +17,11 @@ use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut as TauriShortcut, ShortcutState,
 };
 use tracing::{info, warn};
-use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Shortcut {
     pub key: String,
@@ -48,6 +53,137 @@ type ShortcutCallback = Box<dyn Fn(&tauri::AppHandle) + Send + Sync>;
 
 static DOUBLE_CTRL_ENABLED: AtomicBool = AtomicBool::new(false);
 static DOUBLE_CTRL_LISTENING: AtomicBool = AtomicBool::new(false);
+static DOUBLE_CTRL_STATE: Lazy<Mutex<DoubleCtrlState>> = Lazy::new(|| {
+    Mutex::new(DoubleCtrlState {
+        last_press: None,
+        press_count: 0,
+        left_down: false,
+        right_down: false,
+    })
+});
+
+const VK_CONTROL: u32 = 0x11;
+const VK_LCONTROL: u32 = 0xA2;
+const VK_RCONTROL: u32 = 0xA3;
+const LLKHF_EXTENDED: u32 = 0x01;
+const DOUBLE_CTRL_INTERVAL: Duration = Duration::from_millis(400);
+
+struct DoubleCtrlState {
+    last_press: Option<Instant>,
+    press_count: u8,
+    left_down: bool,
+    right_down: bool,
+}
+
+fn reset_double_ctrl_state() {
+    let mut state = DOUBLE_CTRL_STATE.lock();
+    state.last_press = None;
+    state.press_count = 0;
+    state.left_down = false;
+    state.right_down = false;
+}
+
+fn handle_ctrl_pressed(vk_code: u32) {
+    if !DOUBLE_CTRL_ENABLED.load(Ordering::Relaxed) {
+        reset_double_ctrl_state();
+        return;
+    }
+
+    let matched = {
+        let mut state = DOUBLE_CTRL_STATE.lock();
+        let now = Instant::now();
+
+        let already_down = match vk_code {
+            VK_LCONTROL => state.left_down,
+            VK_RCONTROL => state.right_down,
+            _ => false,
+        };
+        let stale_down = already_down
+            && state
+                .last_press
+                .is_none_or(|last| now.duration_since(last) >= DOUBLE_CTRL_INTERVAL);
+        if already_down && !stale_down {
+            return;
+        }
+
+        match vk_code {
+            VK_LCONTROL => state.left_down = true,
+            VK_RCONTROL => state.right_down = true,
+            _ => {}
+        }
+
+        let within_interval = state
+            .last_press
+            .is_some_and(|last| now.duration_since(last) < DOUBLE_CTRL_INTERVAL);
+        if within_interval {
+            state.press_count = state.press_count.saturating_add(1).min(2);
+        } else {
+            state.press_count = 1;
+        };
+        state.last_press = Some(now);
+
+        if state.press_count == 2 {
+            state.press_count = 0;
+            true
+        } else {
+            false
+        }
+    };
+
+    if !matched {
+        return;
+    }
+
+    let app_handle = ServiceLocator::get_state().get_main_handle().clone();
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        if ServiceLocator::get_state().get_game_mode() {
+            return;
+        }
+        handle_pressed(&handle);
+    });
+}
+
+fn handle_ctrl_released(vk_code: u32) {
+    let mut state = DOUBLE_CTRL_STATE.lock();
+    match vk_code {
+        VK_LCONTROL => state.left_down = false,
+        VK_RCONTROL => state.right_down = false,
+        _ => {}
+    }
+}
+
+unsafe extern "system" fn double_ctrl_keyboard_hook(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if code >= 0 {
+        let message = wparam.0 as u32;
+        let keyboard = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
+
+        // 某些键盘/驱动发送 VK_CONTROL (0x11) 而非 VK_LCONTROL/VK_RCONTROL
+        // 使用 extended 标志来区分左右 Ctrl
+        let vk_code = if keyboard.vkCode == VK_CONTROL {
+            if keyboard.flags.0 & LLKHF_EXTENDED != 0 {
+                VK_RCONTROL
+            } else {
+                VK_LCONTROL
+            }
+        } else {
+            keyboard.vkCode
+        };
+        let is_ctrl = vk_code == VK_LCONTROL || vk_code == VK_RCONTROL;
+
+        if is_ctrl && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
+            handle_ctrl_pressed(vk_code);
+        } else if is_ctrl && (message == WM_KEYUP || message == WM_SYSKEYUP) {
+            handle_ctrl_released(vk_code);
+        }
+    }
+
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
 
 struct ShortcutManagerInner {
     shortcuts: Arc<Mutex<HashMap<TauriShortcut, ShortcutCallback>>>,
@@ -74,58 +210,27 @@ impl ShortcutManagerInner {
             return;
         }
 
-        const VK_LCONTROL: i32 = 0xA2;
-        const VK_RCONTROL: i32 = 0xA3;
+        thread::spawn(move || {
+            info!("Starting Double Ctrl listener (low-level keyboard hook)");
 
-        thread::spawn(|| {
-            info!("Starting Double Ctrl listener (polling mode)");
-            let mut last_ctrl_press = Instant::now();
-            let mut press_count = 0;
-            let mut ctrl_released = true;
-
-            loop {
-                if !DOUBLE_CTRL_ENABLED.load(Ordering::Relaxed) {
-                    press_count = 0;
-                    ctrl_released = true;
-                    thread::sleep(Duration::from_millis(100));
-                    continue;
+            let hook = match unsafe {
+                SetWindowsHookExW(WH_KEYBOARD_LL, Some(double_ctrl_keyboard_hook), None, 0)
+            } {
+                Ok(hook) => hook,
+                Err(error) => {
+                    DOUBLE_CTRL_LISTENING.store(false, Ordering::Relaxed);
+                    warn!("Failed to install Double Ctrl keyboard hook: {}", error);
+                    return;
                 }
+            };
 
-                let left_down = unsafe { GetAsyncKeyState(VK_LCONTROL) < 0 };
-                let right_down = unsafe { GetAsyncKeyState(VK_RCONTROL) < 0 };
-                let ctrl_down = left_down || right_down;
+            let mut message = MSG::default();
+            while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {}
 
-                if ctrl_down && ctrl_released {
-                    let now = Instant::now();
-                    if now.duration_since(last_ctrl_press) < Duration::from_millis(400) {
-                        if press_count >= 1 {
-                            press_count = 2;
-                        } else {
-                            press_count = 1;
-                        }
-                    } else {
-                        press_count = 1;
-                    }
-                    last_ctrl_press = now;
-                    ctrl_released = false;
-
-                    if press_count == 2 {
-                        press_count = 0;
-
-                        let state = ServiceLocator::get_state();
-                        if state.get_game_mode() {
-                            continue;
-                        }
-
-                        let app_handle = state.get_main_handle();
-                        toggle_search_bar(&app_handle);
-                    }
-                } else if !ctrl_down {
-                    ctrl_released = true;
-                }
-
-                thread::sleep(Duration::from_millis(20));
+            if let Err(error) = unsafe { UnhookWindowsHookEx(hook) } {
+                warn!("Failed to uninstall Double Ctrl keyboard hook: {}", error);
             }
+            DOUBLE_CTRL_LISTENING.store(false, Ordering::Relaxed);
         });
     }
 

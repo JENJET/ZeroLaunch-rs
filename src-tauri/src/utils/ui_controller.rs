@@ -69,17 +69,19 @@ pub fn handle_pressed(app_handle: &tauri::AppHandle) {
     };
 
     if let Err(e) = main_window.show() {
-        warn!("Failed to show main window: {}", e);
+        warn!("handle_pressed: Failed to show main window: {}", e);
         return;
     }
+    tracing::trace!("handle_pressed: window shown");
 
     if let Err(e) = main_window.set_focus() {
-        warn!("Failed to set focus on main window: {}", e);
+        warn!("handle_pressed: Failed to set focus on main window: {}", e);
         return;
     }
+    tracing::trace!("handle_pressed: window focused");
 
     if let Err(e) = main_window.emit("show_window", ()) {
-        warn!("Failed to emit show_window event: {}", e);
+        warn!("handle_pressed: Failed to emit show_window event: {}", e);
     }
     let state = ServiceLocator::get_state();
     state.set_search_bar_visible(true);
