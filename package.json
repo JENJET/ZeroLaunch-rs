@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "copy-i18n": "bun scripts/copy-i18n-locales.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "prepare": "bun x husky || echo 'Husky not installed'"

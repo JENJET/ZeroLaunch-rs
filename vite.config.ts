@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-import { copyFileSync, mkdirSync, existsSync, readdirSync } from "fs";
-import { join } from "path";
+import { spawnSync } from "node:child_process";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -11,27 +10,13 @@ const copyI18nPlugin = () => {
   return {
     name: 'copy-i18n-locales',
     buildStart() {
-      const srcLocalesDir = join(process.cwd(), 'src-ui', 'i18n', 'locales');
-      const destDir = join(process.cwd(), 'src-tauri', 'locales');
-      
-      // 创建目标目录
-      if (!existsSync(destDir)) {
-        mkdirSync(destDir, { recursive: true });
-      }
-      if (!existsSync(destDir)) {
-        mkdirSync(destDir, { recursive: true });
-      }
-      // 复制locales文件夹中的所有文件
-      try {
-        const files = readdirSync(srcLocalesDir);
-        files.forEach(file => {
-          const srcFile = join(srcLocalesDir, file);
-          const destFile = join(destDir, file);
-          copyFileSync(srcFile, destFile);
-        });
-        console.log(`✓ ${files.length} i18n locales files copied to src-tauri/locales/`);
-      } catch (error) {
-        console.error('Failed to copy i18n locales:', error);
+      const result = spawnSync("bun", ["run", "copy-i18n"], {
+        stdio: "inherit",
+        shell: process.platform === "win32",
+      });
+
+      if (result.status !== 0) {
+        throw new Error("Failed to copy i18n locales");
       }
     }
   };

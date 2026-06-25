@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::Runtime;
-use tracing::error;
+use tracing::{debug, error};
 
 /// 更新程序管理器的路径配置（同时保存到文件）
 #[tauri::command]
@@ -25,7 +25,7 @@ pub async fn command_save_remote_config<R: Runtime>(
     use tracing::info;
 
     info!("💾 开始保存远程配置");
-    println!("收到的远程配置: {:?}", partial_config);
+    debug!("收到的远程配置: {:?}", partial_config);
 
     let runtime_config = state.get_runtime_config();
 
@@ -58,7 +58,7 @@ pub async fn command_update_runtime_config<R: Runtime>(
     use tracing::info;
 
     info!("🔄 开始更新运行时配置（不保存文件）");
-    println!("收到的运行时配置: {:?}", partial_config);
+    debug!("收到的运行时配置: {:?}", partial_config);
 
     // 先提取别名数据（在 partial_config 被 move 之前）
     let alias_map = partial_config

@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use zip::ZipWriter;
 use zip::write::FileOptions;
 
@@ -490,17 +490,12 @@ fn generate_installer_name(original: &str, version: &str, ai_mode: AiMode) -> St
 async fn run_command(args: Vec<String>) -> Result<()> {
     let mut cmd = Command::new(&args[0]);
     cmd.args(&args[1..]);
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
-    let output = cmd.output().context("执行命令失败")?;
+    let status = cmd.status().context("执行命令失败")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("命令执行失败: {}", stderr);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.is_empty() {
-        println_with_timestamp(&stdout);
+    if !status.success() {
+        anyhow::bail!("命令执行失败，退出状态: {}", status);
     }
 
     Ok(())
@@ -599,7 +594,10 @@ async fn create_portable_zip(exe_path: &Path, zip_name: &str, arch: TargetArch) 
         );
 
     // 添加可执行文件
-    let exe_name = exe_path.file_name().unwrap().to_str().unwrap();
+    let exe_name = exe_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("便携版可执行文件路径无效: {}", exe_path.display()))?;
     zip.start_file(exe_name, options)?;
     let exe_data = fs::read(exe_path)?;
     std::io::copy(&mut exe_data.as_slice(), &mut zip)?;
@@ -650,7 +648,10 @@ fn add_directory_to_zip(
     for entry in fs::read_dir(dir_path)? {
         let entry = entry?;
         let path = entry.path();
-        let name = path.file_name().unwrap().to_str().unwrap();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .with_context(|| format!("无法读取 ZIP 条目文件名: {}", path.display()))?;
         let zip_path = format!("{}/{}", zip_dir_name, name);
 
         if path.is_file() {

@@ -9,7 +9,6 @@ import { useRemoteConfigStore } from './stores/remote_config'
 
 // 禁用右键菜单
 document.addEventListener('contextmenu', (e) => {
-    console.log("右键菜单被禁用")
     e.preventDefault()
 })
 
