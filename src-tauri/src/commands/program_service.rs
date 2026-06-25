@@ -558,8 +558,8 @@ pub async fn everything_enable_path_match<R: Runtime>(
 pub async fn everything_enable_path_match<R: Runtime>(
     _app: tauri::AppHandle<R>,
     _window: tauri::Window<R>,
-    state: tauri::State<'_, Arc<AppState>>,
-    enable: bool,
+    _state: tauri::State<'_, Arc<AppState>>,
+    _enable: bool,
 ) -> Result<(), String> {
     Ok(())
 }
