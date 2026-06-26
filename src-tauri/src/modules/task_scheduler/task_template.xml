@@ -8,6 +8,7 @@
     <LogonTrigger>
       <Enabled>true</Enabled>
       <UserId>${USER_ID}</UserId>
+      <Delay>PT5S</Delay>
     </LogonTrigger>
   </Triggers>
   <Principals>

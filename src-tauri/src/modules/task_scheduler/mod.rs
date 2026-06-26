@@ -418,4 +418,11 @@ mod tests {
         assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"));
         assert!(!xml.contains("${RUN_LEVEL}"));
     }
+
+    #[test]
+    fn test_task_xml_delays_logon_trigger() {
+        let scheduler = TaskScheduler::new("TestTask", "C:\\test.exe", false);
+        let xml = scheduler.generate_task_xml();
+        assert!(xml.contains("<Delay>PT5S</Delay>"));
+    }
 }
