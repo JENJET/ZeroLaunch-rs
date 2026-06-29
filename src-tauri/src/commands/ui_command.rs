@@ -275,12 +275,19 @@ pub async fn show_welcome_window<R: Runtime>(app: tauri::AppHandle<R>) -> Result
     }
 
     // 创建新的欢迎窗口
-    let welcome_result =
+    let welcome_builder =
         WebviewWindowBuilder::new(&app, "welcome", WebviewUrl::App("/welcome".into()))
             .title("欢迎使用 ZeroLaunch-rs!")
             .visible(true)
-            .drag_and_drop(false)
-            .build();
+            .drag_and_drop(false);
+    let welcome_result = if let Some(icon) = crate::load_window_icon_for_current_theme(&app) {
+        welcome_builder
+            .icon(icon)
+            .map_err(|e| format!("Failed to set welcome window icon: {:?}", e))?
+            .build()
+    } else {
+        welcome_builder.build()
+    };
 
     match welcome_result {
         Ok(welcome_window) => {

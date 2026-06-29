@@ -46,7 +46,7 @@ use modules::config::default::{
 };
 use modules::config::load_string_to_runtime_config_;
 use modules::config::save_runtime_config_to_string;
-use modules::config::ui_config::PartialUiConfig;
+use modules::config::ui_config::{PartialUiConfig, ThemeMode};
 use modules::config::window_state::PartialWindowState;
 use modules::program_manager::config::program_manager_config::RuntimeProgramConfig;
 use modules::program_manager::semantic_backend;
@@ -264,6 +264,7 @@ pub fn run() {
                 if label == "main" {
                     if let tauri::WindowEvent::ThemeChanged(theme) = event {
                         crate::tray::update_tray_icon_theme();
+                        update_taskbar_window_icon_theme();
                         let theme_str = match theme {
                             tauri::Theme::Dark => "dark",
                             tauri::Theme::Light => "light",
@@ -296,12 +297,19 @@ async fn init_app_state(app: &mut App) {
     let create_and_show_welcome_page = move || {
         info!("第一次启动程序或者更新程序，创建欢迎页面");
         // 创建欢迎页面
-        let welcome_result =
+        let welcome_builder =
             tauri::WebviewWindowBuilder::new(app, "welcome", WebviewUrl::App("/welcome".into()))
                 .title("欢迎下载ZeroLaunch-rs! 此页面只会出现一次，用于提供基础的使用说明╰(*°▽°*)╯")
                 .visible(true)
-                .drag_and_drop(false)
-                .build();
+                .drag_and_drop(false);
+        let welcome_result = if let Some(icon) = load_window_icon_for_current_theme(app.handle()) {
+            welcome_builder
+                .icon(icon)
+                .expect_programming("无法设置欢迎窗口图标")
+                .build()
+        } else {
+            welcome_builder.build()
+        };
         let welcome = Arc::new(match welcome_result {
             Err(e) => {
                 error!("创建welcome页面失败: {:?}", e);
@@ -568,6 +576,55 @@ fn register_icon_path(app: &mut App) {
     }
 }
 
+fn should_use_white_window_icon<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> bool {
+    let state = ServiceLocator::get_state();
+    let ui_config = state.get_runtime_config().get_ui_config();
+
+    match ui_config.get_tray_theme_mode() {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::System => app_handle
+            .get_webview_window("main")
+            .and_then(|window| window.theme().ok())
+            .is_some_and(|theme| theme == tauri::Theme::Dark),
+    }
+}
+
+pub(crate) fn load_window_icon_for_current_theme<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Option<tauri::image::Image<'static>> {
+    let icon_key = if should_use_white_window_icon(app_handle) {
+        "window_icon_white"
+    } else {
+        "window_icon"
+    };
+
+    APP_PIC_PATH
+        .get(icon_key)
+        .and_then(|path_entry| tauri::image::Image::from_path(path_entry.value()).ok())
+        .map(|icon| icon.to_owned())
+}
+
+pub fn update_taskbar_window_icon_theme() {
+    let state = ServiceLocator::get_state();
+    let app_handle = state.get_main_handle();
+    let Some(icon) = load_window_icon_for_current_theme(&app_handle) else {
+        warn!("Failed to load taskbar window icon for current theme");
+        return;
+    };
+
+    for label in ["setting_window", "welcome"] {
+        if let Some(window) = app_handle.get_webview_window(label) {
+            if let Err(e) = window.set_icon(icon.clone()) {
+                warn!(
+                    "Failed to update taskbar icon for window '{}': {:?}",
+                    label, e
+                );
+            }
+        }
+    }
+}
+
 fn init_setting_window(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = ServiceLocator::get_state();
@@ -585,38 +642,7 @@ fn init_setting_window(app: tauri::AppHandle) {
             saved_x, saved_y, saved_width, saved_height
         );
 
-        // 根据主题选择窗口图标（使用高分辨率 128x128）
-        // Dark模式 → 深色任务栏 → 需要白色图标
-        // Light模式 → 浅色任务栏 → 需要深色图标
-        let window_icon_result: Option<tauri::image::Image<'_>> = {
-            let ui_config = config.get_ui_config();
-            let tray_theme_mode = ui_config.get_tray_theme_mode();
-            let use_white_icon = match tray_theme_mode {
-                crate::modules::config::ui_config::ThemeMode::Dark => true,
-                crate::modules::config::ui_config::ThemeMode::Light => false,
-                crate::modules::config::ui_config::ThemeMode::System => {
-                    // 在异步上下文中，尝试从主窗口获取主题
-                    if let Some(main_window) = app.get_webview_window("main") {
-                        match main_window.theme() {
-                            Ok(theme) => theme == tauri::Theme::Dark,
-                            Err(_) => false,
-                        }
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            let icon_key = if use_white_icon {
-                "window_icon_white"
-            } else {
-                "window_icon"
-            };
-
-            APP_PIC_PATH
-                .get(icon_key)
-                .and_then(|path_entry| tauri::image::Image::from_path(path_entry.value()).ok())
-        };
+        let window_icon_result = load_window_icon_for_current_theme(&app);
 
         let window_builder = tauri::WebviewWindowBuilder::new(
             &app,

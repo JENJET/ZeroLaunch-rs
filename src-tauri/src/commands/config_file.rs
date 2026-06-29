@@ -7,8 +7,8 @@ use crate::save_config_to_file;
 use crate::storage::config::PartialLocalConfig;
 use crate::tray::update_tray_icon_theme;
 use crate::utils::service_locator::ServiceLocator;
-use crate::AppState;
 use crate::REMOTE_CONFIG_NAME;
+use crate::{update_taskbar_window_icon_theme, AppState};
 use std::sync::Arc;
 use tauri::Emitter;
 use tauri::Manager;
@@ -32,8 +32,9 @@ pub async fn command_save_remote_config<R: Runtime>(
     runtime_config.update(partial_config);
     info!("✅ 运行时配置已更新");
 
-    // Update tray icon if needed
+    // Update icons if needed
     update_tray_icon_theme();
+    update_taskbar_window_icon_theme();
 
     // 保存配置后立即应用自启动设置（创建/删除任务）
     if let Err(e) = crate::handle_auto_start() {
