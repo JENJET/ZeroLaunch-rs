@@ -212,6 +212,7 @@ export function useInlineParameterMode(options: UseInlineParameterModeOptions) {
       return true
     }
 
+    let launched = false
     try {
       await invoke('launch_program', {
         programGuid: session.programGuid,
@@ -220,10 +221,15 @@ export function useInlineParameterMode(options: UseInlineParameterModeOptions) {
         args: parsedArgs,
         queryText: searchText.value,
       })
+      launched = true
     } catch (error) {
       console.error('Failed to launch program with inline arguments:', error)
     } finally {
       clearInlineParameterSession()
+    }
+
+    if (launched) {
+      searchText.value = ''
     }
 
     return true

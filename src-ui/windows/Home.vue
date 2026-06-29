@@ -575,6 +575,7 @@ const confirmParameterInput = async () => {
   }
 
   const session = parameterSession.value
+  let launched = false
   session.collectedArgs.push(session.inputValue)
 
   if (session.collectedArgs.length < session.info.placeholderCount) {
@@ -592,10 +593,15 @@ const confirmParameterInput = async () => {
       args: session.collectedArgs,
       queryText: searchText.value,
     })
+    launched = true
   } catch (error) {
     console.error('Failed to launch program with arguments:', error)
   } finally {
     resetParameterSession()
+  }
+
+  if (launched) {
+    searchText.value = ''
   }
 }
 
@@ -982,6 +988,7 @@ const launch_program = async (itemIndex: number, ctrlKey = false, shiftKey = fal
     args: [],
     queryText: searchText.value,
   })
+  searchText.value = ''
 }
 
 const handleItemClick = (itemIndex: number, ctrlKey: boolean) => {
