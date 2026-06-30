@@ -8,9 +8,10 @@ use crate::save_config_to_file;
 use crate::state::app_state::AppState;
 use crate::utils::notify::notify;
 use crate::utils::service_locator::ServiceLocator;
-use crate::utils::windows::shell_execute_open;
+use crate::utils::windows::{shell_execute_open, shell_execute_verb};
 use crate::ProgramManager;
 use serde::{Deserialize, Serialize};
+use std::ffi::CStr;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -29,6 +30,12 @@ pub struct ProgramInfo {
 
 #[derive(Serialize, Debug)]
 pub struct SearchResult(String, String, String); // GUID改为字符串，避免JS number精度丢失
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct StartScreenState {
+    pub can_pin_to_start: bool,
+    pub is_pinned_to_start: bool,
+}
 
 #[derive(Serialize, Debug)]
 pub struct LaunchTemplateInfo {
@@ -539,6 +546,181 @@ pub async fn launch_path_as_admin<R: Runtime>(
     Ok(())
 }
 
+fn is_start_pinnable_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "exe" | "lnk"))
+        .unwrap_or(false)
+}
+
+fn query_start_screen_state(path: &Path) -> Result<StartScreenState, String> {
+    if !path.exists() {
+        return Err(format!("路径不存在: {}", path.display()));
+    }
+    if !path.is_file() {
+        return Err(format!("目标不是文件: {}", path.display()));
+    }
+    if !is_start_pinnable_path(path) {
+        return Ok(StartScreenState::default());
+    }
+
+    use windows::core::{PCWSTR, PSTR};
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        IContextMenu, IShellFolder, SHBindToParent, SHParseDisplayName, CMF_EXTENDEDVERBS,
+        CMF_NORMAL, GCS_VERBA,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemID,
+    };
+
+    let wide_path = crate::utils::windows::get_u16_vec(path);
+    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+    unsafe {
+        SHParseDisplayName(
+            PCWSTR::from_raw(wide_path.as_ptr()),
+            None,
+            &mut pidl,
+            0,
+            None,
+        )
+        .map_err(|error| format!("解析路径失败: {}", error))?;
+    }
+
+    if pidl.is_null() {
+        return Err(format!("解析路径失败: {}", path.display()));
+    }
+
+    let result = (|| -> Result<StartScreenState, String> {
+        let mut child_pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+        let parent_folder: IShellFolder = unsafe {
+            SHBindToParent(pidl, Some(&mut child_pidl))
+                .map_err(|error| format!("绑定父级失败: {}", error))?
+        };
+
+        if child_pidl.is_null() {
+            return Err("绑定文件项失败".to_string());
+        }
+
+        let context_menu: IContextMenu = unsafe {
+            parent_folder
+                .GetUIObjectOf(
+                    windows::Win32::Foundation::HWND::default(),
+                    &[child_pidl as *const ITEMIDLIST],
+                    None,
+                )
+                .map_err(|error| format!("获取上下文菜单失败: {}", error))?
+        };
+
+        let menu =
+            unsafe { CreatePopupMenu().map_err(|error| format!("创建菜单失败: {}", error))? };
+        let query_result = unsafe {
+            context_menu.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_EXTENDEDVERBS)
+        };
+        if query_result.is_err() {
+            unsafe {
+                let _ = DestroyMenu(menu);
+            }
+            return Err(format!("查询上下文菜单失败: {}", query_result));
+        }
+
+        let mut can_pin_to_start = false;
+        let mut is_pinned_to_start = false;
+        let item_count = unsafe { GetMenuItemCount(Some(menu)) };
+        for index in 0..item_count {
+            let menu_id = unsafe { GetMenuItemID(menu, index) };
+            if menu_id == u32::MAX {
+                continue;
+            }
+
+            let mut buffer = [0u8; 260];
+            let hr = unsafe {
+                context_menu.GetCommandString(
+                    menu_id.saturating_sub(1) as usize,
+                    GCS_VERBA,
+                    None,
+                    PSTR(buffer.as_mut_ptr()),
+                    buffer.len() as u32,
+                )
+            };
+            if hr.is_err() {
+                continue;
+            }
+
+            let verb = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8) }
+                .to_string_lossy()
+                .trim()
+                .to_ascii_lowercase();
+
+            match verb.as_str() {
+                "pintostartscreen" | "pintostart" | "startpin" => can_pin_to_start = true,
+                "unpinfromstartscreen" | "unpinfromstart" | "startunpin" => {
+                    can_pin_to_start = true;
+                    is_pinned_to_start = true;
+                }
+                _ => {}
+            }
+        }
+
+        unsafe {
+            let _ = DestroyMenu(menu);
+        }
+
+        if !can_pin_to_start {
+            can_pin_to_start = true;
+        }
+
+        Ok(StartScreenState {
+            can_pin_to_start,
+            is_pinned_to_start,
+        })
+    })();
+
+    unsafe {
+        CoTaskMemFree(Some(pidl as _));
+    }
+
+    result
+}
+
+fn pin_existing_path_to_start(path: &Path) -> Result<(), String> {
+    let state = query_start_screen_state(path)?;
+    let verbs = if state.is_pinned_to_start {
+        ["unpinfromstartscreen", "unpinfromstart", "startunpin"]
+    } else {
+        ["pintostartscreen", "pintostart", "startpin"]
+    };
+
+    let mut last_error = None;
+    for verb in verbs {
+        match shell_execute_verb(path, verb) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    let error_detail = last_error
+        .map(|error| error.to_hresult().to_string())
+        .unwrap_or_else(|| "unknown error".to_string());
+    Err(format!("开始屏幕操作失败: {}", error_detail))
+}
+
+#[tauri::command]
+pub async fn command_get_start_screen_state(path: String) -> Result<StartScreenState, String> {
+    query_start_screen_state(Path::new(&path))
+}
+
+/// 将 Everything 搜索结果路径固定到开始屏幕
+#[tauri::command]
+pub async fn pin_path_to_start<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    _window: tauri::Window<R>,
+    path: String,
+) -> Result<(), String> {
+    pin_existing_path_to_start(Path::new(&path))
+}
+
 /// 在资源管理器中打开 Everything 搜索结果所在目录
 #[cfg(target_arch = "x86_64")]
 #[tauri::command]
@@ -827,6 +1009,29 @@ pub async fn command_get_program_path(program_guid: String) -> Result<String, St
         .ok_or_else(|| "Program not found".to_string())?;
 
     Ok(program.launch_method.get_text().clone())
+}
+
+/// 将程序固定到开始屏幕
+#[tauri::command]
+pub async fn pin_program_to_start(program_guid: String) -> Result<(), String> {
+    let guid = program_guid
+        .parse::<u64>()
+        .map_err(|e| format!("无效的 GUID 格式: {}", e))?;
+
+    let state = ServiceLocator::get_state();
+    let program_manager = state.get_program_manager();
+
+    let program = program_manager
+        .get_program_by_guid(guid)
+        .await
+        .ok_or_else(|| "Program not found".to_string())?;
+
+    match &program.launch_method {
+        LaunchMethod::Path(path) | LaunchMethod::File(path) => {
+            pin_existing_path_to_start(Path::new(path))
+        }
+        _ => Err("该结果不支持固定到开始屏幕".to_string()),
+    }
 }
 
 /// 复制程序路径到剪贴板

@@ -67,6 +67,7 @@ const visible = ref(false)
 const selectedIndex = ref(0)
 const submenuRef = ref<HTMLElement | null>(null)
 const position = ref<Position>({ top: 0, left: 0 })
+const anchorPosition = ref<Position>({ top: 0, left: 0 })
 
 // 计算样式
 const submenuStyle = computed(() => {
@@ -119,7 +120,12 @@ const nameStyle = computed(() => {
 
 // 计算菜单尺寸
 const calculateMenuSize = () => {
-    if (!submenuRef.value) return { width: 0, height: 0 }
+    if (!submenuRef.value) {
+        return {
+            width: 0,
+            height: props.menuItems.length * props.itemHeight * 0.6 + 8,
+        }
+    }
 
     return {
         width: submenuRef.value.offsetWidth,
@@ -127,25 +133,42 @@ const calculateMenuSize = () => {
     }
 }
 
-// 计算调整后的位置，确保菜单完全在窗口内
-const calculateAdjustedPosition = (top: number, left: number) => {
+const calculateMenuBounds = () => {
+    const container = submenuRef.value?.parentElement
+    if (container) {
+        return {
+            width: container.clientWidth,
+            height: container.clientHeight,
+        }
+    }
 
+    return props.windowSize
+}
+
+// 计算调整后的位置，确保菜单完全在窗口内
+const calculateAdjustedPosition = (anchorTop: number, anchorLeft: number) => {
     const menuSize = calculateMenuSize()
-    const { width, height } = props.windowSize
+    const { width, height } = calculateMenuBounds()
+    let top = anchorTop
+    let left = anchorLeft
+
+    if (top + menuSize.height > height) {
+        top = anchorTop - menuSize.height
+    }
     
     // 确保菜单不会超出右边界
     if (left + menuSize.width > width) {
         left = width - menuSize.width - 5 // 5px 边距
     }
 
-    // 确保菜单不会超出下边界
-    if (top + menuSize.height > height) {
-        top = height - menuSize.height - 5 // 5px 边距
-    }
-
     // 确保菜单不会超出上边界
     if (top < 0) {
         top = 5 // 5px 边距
+    }
+
+    // 极端情况下菜单比窗口高，优先保证顶部可见
+    if (top + menuSize.height > height) {
+        top = Math.max(5, height - menuSize.height - 5)
     }
 
     // 确保菜单不会超出左边界
@@ -169,7 +192,7 @@ watch(visible, async (newValue) => {
     if (newValue) {
         await nextTick()
         // 菜单显示后重新计算位置
-        const adjustedPosition = calculateAdjustedPosition(position.value.top, position.value.left)
+        const adjustedPosition = calculateAdjustedPosition(anchorPosition.value.top, anchorPosition.value.left)
         if (submenuRef.value) {
             position.value.top = adjustedPosition.top
             position.value.left = adjustedPosition.left
@@ -178,15 +201,15 @@ watch(visible, async (newValue) => {
 })
 
 // 修改后的showMenu方法，需要传入位置参数
-const showMenu = (newPosition: Position) => {
+const showMenu = async (newPosition: Position) => {
     initMenu()
+    anchorPosition.value = newPosition
     position.value = newPosition
-    const adjustedPosition = calculateAdjustedPosition(position.value.top, position.value.left)
-    if (submenuRef.value) {
-        position.value.top = adjustedPosition.top
-        position.value.left = adjustedPosition.left
-    }
     visible.value = true
+    await nextTick()
+    const adjustedPosition = calculateAdjustedPosition(anchorPosition.value.top, anchorPosition.value.left)
+    position.value.top = adjustedPosition.top
+    position.value.left = adjustedPosition.left
 }
 
 const hideMenu = () => {
