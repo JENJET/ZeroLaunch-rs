@@ -164,26 +164,3 @@ pub fn shell_execute_open<P: AsRef<Path>>(path: P) -> Result<(), WIN32_ERROR> {
         }
     }
 }
-
-/// 使用指定 Shell 动词执行路径。
-pub fn shell_execute_verb<P: AsRef<Path>>(path: P, verb: &str) -> Result<(), WIN32_ERROR> {
-    let wide_path = get_u16_vec(path);
-    let wide_verb = get_u16_vec(verb);
-
-    unsafe {
-        let result = ShellExecuteW(
-            None,
-            PCWSTR::from_raw(wide_verb.as_ptr()),
-            PCWSTR::from_raw(wide_path.as_ptr()),
-            PCWSTR::from_raw(std::ptr::null()),
-            PCWSTR::from_raw(std::ptr::null()),
-            SW_SHOWNORMAL,
-        );
-
-        if result.0 as isize <= 32 {
-            Err(GetLastError())
-        } else {
-            Ok(())
-        }
-    }
-}

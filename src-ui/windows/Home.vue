@@ -108,7 +108,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { FolderOpened, Refresh, Setting, StarFilled, CircleClose, DocumentCopy, Files, Aim, Remove } from '@element-plus/icons-vue'
+import { FolderOpened, Refresh, Setting, StarFilled, CircleClose, DocumentCopy, Files } from '@element-plus/icons-vue'
 
 import { reduceOpacity } from '../utils/color'
 import { initializeLanguage } from '../i18n'
@@ -190,10 +190,6 @@ const isEverythingMode = computed(() => inputContext.value === InputContext.Ever
 const showOpenLocation = ref<boolean>(false)
 // 跟踪当前选中程序是否支持管理员运行
 const canRunAsAdmin = ref<boolean>(true)
-// 跟踪当前选中程序是否支持固定到开始屏幕
-const canPinToStart = ref<boolean>(false)
-// 跟踪当前选中程序是否已经固定到开始屏幕
-const isPinnedToStart = ref<boolean>(false)
 
 const effective_ui_config = computed(() => {
   const current_mode_colors = is_dark.value ? ui_config.value.dark_mode_colors : ui_config.value.light_mode_colors
@@ -250,11 +246,6 @@ interface LaunchTemplateInfoResponse {
   kind: LaunchMethodKind;
   placeholder_count: number;
   show_name: string;
-}
-
-interface StartScreenState {
-  can_pin_to_start: boolean;
-  is_pinned_to_start: boolean;
 }
 
 const parameterSession = ref<ParameterSession | null>(null)
@@ -405,13 +396,6 @@ const resultSubMenuItems = computed(() => {
     if (isExecutableFile()) {
       items.push({ name: t('app.run_as_admin'), icon: StarFilled, action: () => { runEverythingAsAdmin() } })
     }
-    if (everythingPanelRef.value) {
-      const path = everythingPanelRef.value.getSelectedPath()
-      if (path && canPinToStart.value) {
-        items.push({ name: isPinnedToStart.value ? t('app.unpin_from_start') : t('app.pin_to_start'), icon: isPinnedToStart.value ? Remove : Aim, action: () => { pinCurrentToStart() } })
-      }
-    }
-    
     return items
   } else {
     // 普通模式：根据程序类型动态显示菜单
@@ -425,9 +409,6 @@ const resultSubMenuItems = computed(() => {
     // 基础菜单项
     if (canRunAsAdmin.value) {
       items.push({ name: t('app.run_as_admin'), icon: StarFilled, action: () => { runTargetProgramWithAdmin() } })
-    }
-    if (canPinToStart.value) {
-      items.push({ name: isPinnedToStart.value ? t('app.unpin_from_start') : t('app.pin_to_start'), icon: isPinnedToStart.value ? Remove : Aim, action: () => { pinCurrentToStart() } })
     }
     items.push(
       { name: t('app.copy_path'), icon: DocumentCopy, action: () => { copyPath() } },
@@ -461,15 +442,6 @@ const isExecutableFile = (): boolean => {
   return executableExtensions.some(ext => lowerPath.endsWith(ext))
 }
 
-const isStartPinnablePath = (path: string): boolean => {
-  if (path.endsWith('\\') || path.endsWith('/')) {
-    return false
-  }
-
-  const lowerPath = path.toLowerCase()
-  return lowerPath.endsWith('.exe') || lowerPath.endsWith('.lnk')
-}
-
 // 检查程序类型是否为路径类型
 const checkProgramType = async (programGuid: string): Promise<boolean> => {
   try {
@@ -495,36 +467,6 @@ const checkCanRunAsAdmin = async (programGuid: string): Promise<boolean> => {
   } catch (error) {
     console.error('Failed to get launch template info:', error)
     return false
-  }
-}
-
-// 检查程序类型是否支持固定到开始屏幕
-const checkStartScreenStateForPath = async (path: string): Promise<StartScreenState> => {
-  if (!isStartPinnablePath(path)) {
-    return { can_pin_to_start: false, is_pinned_to_start: false }
-  }
-
-  try {
-    return await invoke<StartScreenState>('command_get_start_screen_state', { path })
-  } catch (error) {
-    console.error('Failed to get Start screen state:', error)
-    return { can_pin_to_start: true, is_pinned_to_start: false }
-  }
-}
-
-// 检查程序类型是否支持固定到开始屏幕，以及是否已固定
-const checkStartScreenState = async (programGuid: string): Promise<StartScreenState> => {
-  try {
-    const info = await invoke<LaunchTemplateInfoResponse>('get_launch_template_info', {
-      programGuid: programGuid,
-    })
-    if (info.kind !== 'Path' && info.kind !== 'File') {
-      return { can_pin_to_start: false, is_pinned_to_start: false }
-    }
-    return await checkStartScreenStateForPath(info.template)
-  } catch (error) {
-    console.error('Failed to get Start screen state:', error)
-    return { can_pin_to_start: false, is_pinned_to_start: false }
   }
 }
 
@@ -1137,19 +1079,7 @@ const { handleKeyDown, handleKeyUp, handleBlur } = useShortcuts({
 })
 
 const prepareResultMenuState = async (index: number) => {
-  if (isEverythingMode.value) {
-    if (everythingPanelRef.value) {
-      const path = everythingPanelRef.value.getSelectedPath()
-      if (path) {
-        const state = await checkStartScreenStateForPath(path)
-        canPinToStart.value = state.can_pin_to_start
-        isPinnedToStart.value = state.is_pinned_to_start
-      } else {
-        canPinToStart.value = false
-        isPinnedToStart.value = false
-      }
-    }
-  } else {
+  if (!isEverythingMode.value) {
     const currentResults = getCurrentResults()
     const selected = currentResults[index]
     if (selected) {
@@ -1159,14 +1089,9 @@ const prepareResultMenuState = async (index: number) => {
       checkCanRunAsAdmin(selected[0]).then(canRun => {
         canRunAsAdmin.value = canRun
       })
-      const startState = await checkStartScreenState(selected[0])
-      canPinToStart.value = startState.can_pin_to_start
-      isPinnedToStart.value = startState.is_pinned_to_start
     } else {
       showOpenLocation.value = false
       canRunAsAdmin.value = false
-      canPinToStart.value = false
-      isPinnedToStart.value = false
     }
   }
 }
@@ -1219,32 +1144,6 @@ const runEverythingAsAdmin = async () => {
   } catch (error) {
     console.error('Failed to run as admin:', error)
     ElMessage.error(t('app.run_as_admin_failed'))
-  }
-}
-
-const pinCurrentToStart = async () => {
-  const wasPinned = isPinnedToStart.value
-  try {
-    if (isEverythingMode.value) {
-      if (!everythingPanelRef.value) return
-      const path = everythingPanelRef.value.getSelectedPath()
-      if (!path) return
-
-      await invoke('pin_path_to_start', { path })
-    } else {
-      const currentResults = getCurrentResults()
-      const selected = currentResults[selectedIndex.value]
-      if (!selected) return
-
-      await invoke('pin_program_to_start', { programGuid: selected[0] })
-    }
-
-    isPinnedToStart.value = !wasPinned
-    ElMessage.success(wasPinned ? t('app.unpin_from_start_success') : t('app.pin_to_start_success'))
-    resultItemMenuRef.value?.hideMenu()
-  } catch (error) {
-    console.error('Failed to update Start screen:', error)
-    ElMessage.error(wasPinned ? t('app.unpin_from_start_failed') : t('app.pin_to_start_failed'))
   }
 }
 
